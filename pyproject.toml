@@ -1,0 +1,70 @@
+[project]
+name = "atomchain"
+version = "0.1.0"
+description = "A library to chain the atomic models with applications"
+authors = [
+    {name = "Xu He", email = "mailhexu@gmail.com"},
+]
+requires-python = ">=3.8"
+readme = "README.md"
+license = {text = "BSD-2"}
+dependencies = [
+    "numpy",
+    "matplotlib",
+    "ase",
+]
+
+
+classifiers = [
+  # How mature is this project? Common values are
+  #   3 - Alpha
+  #   4 - Beta
+  #   5 - Production/Stable
+  "Development Status :: 3 - Alpha",
+
+  "Programming Language :: Python :: 3",
+  "Operating System :: OS Independent",
+  "Intended Audience :: Science/Research",
+  "Topic :: Scientific/Engineering :: Chemistry",
+  "Topic :: Scientific/Engineering :: Physics",
+
+  "License :: OSI Approved :: BSD License",
+
+  # Specify the Python versions you support here.
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.7",
+  "Programming Language :: Python :: 3.8",
+  "Programming Language :: Python :: 3.9",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+]
+
+[project.scripts]
+mlrelax = "atomchain.relax:mlrelax_cli"
+mlphonon = "atomchain.phonon:mlphonon_cli"
+mlgap = "atomchain.gap:mlgap_cli"
+	
+
+[build-system]
+requires = ["setuptools>=61", "wheel"]
+build-backend = "setuptools.build_meta"
+
+
+
+[tool.pdm]
+distribution = true
+
+[project.optional-dependencies]
+test=[
+    "pytest>=6.2.0",
+]
+
+dev=[
+    "pytest>=6.2.0",
+    "black>=21.6b0",
+    "pre-commit>=2.13.0",
+    "sphinx>=4.1.2",
+]
+
+

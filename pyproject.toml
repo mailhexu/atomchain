@@ -1,6 +1,6 @@
 [project]
 name = "atomchain"
-version = "0.1.0"
+version = "0.1.1"
 description = "A library to chain the atomic models with applications"
 authors = [
     {name = "Xu He", email = "mailhexu@gmail.com"},
@@ -42,7 +42,7 @@ classifiers = [
 
 [project.scripts]
 mlrelax = "atomchain.relax:mlrelax_cli"
-mlphonon = "atomchain.phonon:mlphonon_cli"
+mlphonon = "atomchain.mlphonon:mlphonon_cli"
 mlgap = "atomchain.gap:mlgap_cli"
 	
 

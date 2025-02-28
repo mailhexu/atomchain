@@ -7,9 +7,9 @@ from __future__ import annotations
 
 import argparse
 
-from ase.constraints import UnitCellFilter
+from ase.constraints import FixAtoms, UnitCellFilter
 from ase.io import Trajectory, read, write
-from ase.optimize import BFGS, FIRE
+from ase.optimize import FIRE
 
 try:
     from ase.constraints import FixSymmetry
@@ -28,6 +28,7 @@ def relax_with_ml(
     fmax=0.001,
     cell_factor=1000,
     rattle=None,
+    fix_atoms=None,
     **ucf_kwargs,
 ):
     """
@@ -56,11 +57,13 @@ def relax_with_ml(
     catoms.calc = calc
     if sym:
         catoms.set_constraint(FixSymmetry(catoms))
+    if fix_atoms is not None:
+        catoms.set_constraint(FixAtoms(indices=fix_atoms))
     if relax_cell:
         ecf = UnitCellFilter(catoms, cell_factor=cell_factor, **ucf_kwargs)
         opt = FIRE(ecf)
         opt.run(fmax=fmax * 10, steps=3500)
-        opt = BFGS(ecf)
+        opt = FIRE(ecf)
         opt.run(fmax=fmax, steps=5000)
     else:
         opt = FIRE(catoms)
@@ -120,6 +123,13 @@ def mlrelax_cli():
         "-p",
         help="The path of the model file for deepmd",
         default="model.dp",
+    )
+    p.add_argument(
+        "--fix_atoms",
+        "-fa",
+        help="The indices of the atoms to be fixed during relaxation",
+        nargs="+",
+        type=int,
     )
     args = p.parse_args()
     atoms = read(args.fname)

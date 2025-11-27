@@ -4,7 +4,7 @@ from ase.io import Trajectory
 from ase.optimize import FIRE
 from phonopy.units import VaspToTHz
 
-from atomchain.frozenphonon import calculate_phonon
+from atomchain.phonon.frozenphonon import calculate_phonon
 
 
 def ase_to_pymatgen(atoms):
@@ -121,12 +121,14 @@ def phonon_with_ml(
     calculate_phonon(atoms, calc=calc, **phon_args)
 
     if plot:
-        from pyDFTutils.phonon.plotphonopy import plot_phonon
+        from atomchain.phonon.plotphonopy import plot_phonon
+
+        # Construct kpath string from knames if provided
+        kpath = knames if isinstance(knames, str) else None
 
         plot_phonon(
-            path="./",
-            knames=knames,
-            kvectors=kvectors,
+            path="phonon_save",
+            kpath=kpath,
             npoints=npoints,
             figname=figname,
             show=True,

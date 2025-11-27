@@ -1,5 +1,6 @@
 doc/refs/*.pdf
 
+phonon_save
 
 *.swp
 
@@ -75,6 +76,18 @@ nosetests.xml
 coverage.xml
 *.cover
 .hypothesis/
+.pytest_cache/
+test_results/
+*_results/
+
+# Test artifacts
+*.traj
+*.pickle
+phonon.pickle
+forces_set.pickle
+FORCE_CONSTANTS
+phonopy_params.yaml
+disp.yaml
 
 # Translations
 *.mo

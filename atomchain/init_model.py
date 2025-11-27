@@ -39,6 +39,9 @@ def init_calc(model_type="chgnet", model_path=None):
         from deepmd.calculator import DP
 
         calc = DP(model=model_path)
+    elif model_type.lower() == "mace":
+        from mace.calculators import mace_mp
+        calc = mace_mp(model="medium", dispersion=False, default_dtype="float32", device='cpu')
     else:
         raise ValueError(
             "model_type not recognized. The current supported models are: 'matgl', 'm3gnet', 'chgnet', 'deepmd'"

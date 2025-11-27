@@ -48,7 +48,8 @@ mlphonon = "atomchain.phonon.mlphonon:mlphonon_cli"
 mlgap = "atomchain.gap:mlgap_cli"
 mlsinglepoint = "atomchain.singlepoint:mlsinglepoint_cli"
 mlsupercell = "atomchain.supercell:mlsupercell_cli"
-	
+mlrattle = "atomchain.rattle:mlrattle_cli"
+mlbatch = "atomchain.batch:mlbatch_cli"
 
 [build-system]
 requires = ["setuptools>=61", "wheel"]

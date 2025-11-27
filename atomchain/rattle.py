@@ -3,14 +3,13 @@
 Rattle dataset generation for ML potential training.
 
 This module provides functionality to generate training datasets by creating
-multiple structures with random atomic displacements and optional cell deformations,
-computing their properties with ML calculators, and saving to ASE trajectory files.
+multiple structures with random atomic displacements and optional cell deformations.
+Structures are saved to trajectory files for later property calculations.
 """
 
 from __future__ import annotations
 
 import argparse
-import warnings
 from pathlib import Path
 from typing import List, Optional, Union
 
@@ -18,7 +17,6 @@ import numpy as np
 from ase import Atoms
 from ase.io import Trajectory, read
 
-from atomchain.init_model import init_calc
 from atomchain.supercell import make_supercell_structure
 
 
@@ -26,8 +24,6 @@ def generate_rattle_dataset(
     atoms: Union[Atoms, str],
     n_struct: int = 100,
     stdev: float = 0.05,
-    calc: Union[str, object] = "chgnet",
-    model_path: Optional[str] = None,
     supercell: Optional[Union[int, List[int]]] = None,
     cell_stdev: Optional[float] = None,
     seed: Optional[int] = None,
@@ -38,19 +34,13 @@ def generate_rattle_dataset(
     Generate training dataset with random atomic displacements and cell deformations.
 
     This function creates multiple structures by applying random displacements to
-    atomic positions (rattle) and optionally random strain to cell vectors. Each
-    structure's energy, forces, and stress are computed using an ML calculator
-    and saved to an ASE trajectory file.
+    atomic positions (rattle) and optionally random strain to cell vectors.
+    Structures are saved to trajectory file without property calculations.
 
     Args:
         atoms: ASE Atoms object or path to structure file (POSCAR, CIF, XYZ, etc.)
         n_struct: Number of structures to generate (default: 100)
         stdev: Standard deviation for atomic displacements in Ångström (default: 0.05)
-        calc: Calculator to use. Can be:
-              - String: 'chgnet', 'm3gnet', 'mace', 'deepmd', etc.
-              - ASE Calculator object: pre-initialized calculator
-              Default: 'chgnet'
-        model_path: Path to custom model file (required for some calculators like deepmd)
         supercell: Supercell specification applied before rattling. Can be:
                    - int: Isotropic scaling (e.g., 2 → 2×2×2)
                    - List[int]: Diagonal scaling (e.g., [2,2,3] → 2×2×3)
@@ -86,7 +76,7 @@ def generate_rattle_dataset(
         >>> # Read generated dataset
         >>> from ase.io import read
         >>> structures = read(traj_path, ':')
-        >>> energies = [s.info['energy'] for s in structures]
+        >>> print(f"Generated {len(structures)} structures")
     """
     # Validation
     if n_struct < 1:
@@ -113,16 +103,6 @@ def generate_rattle_dataset(
             print(f"[Rattle] Creating supercell: {supercell}")
         base_atoms = make_supercell_structure(base_atoms, supercell)
 
-    # Initialize calculator
-    if isinstance(calc, str):
-        if verbose:
-            print(f"[Rattle] Initializing calculator: {calc}")
-        calculator = init_calc(model_type=calc, model_path=model_path)
-        calculator_name = calc
-    else:
-        calculator = calc
-        calculator_name = type(calc).__name__
-
     # Set random seed for reproducibility
     if seed is not None:
         np.random.seed(seed)
@@ -139,7 +119,6 @@ def generate_rattle_dataset(
 
     # Progress reporting setup
     progress_interval = max(1, n_struct // 10)  # Report every 10%
-    skipped = 0
 
     # Generate structures
     for i in range(n_struct):
@@ -157,43 +136,19 @@ def generate_rattle_dataset(
 
         # Apply atomic displacements using ASE rattle method
         # Note: rattle modifies atoms in-place
-        rattled_atoms.rattle(stdev=stdev, seed=None)  # Use global np.random state
+        # Use rng=np.random to avoid ASE's default seed=42 when seed=None
+        rattled_atoms.rattle(stdev=stdev, rng=np.random if seed is None else None)
 
-        # Attach calculator
-        rattled_atoms.calc = calculator
-
-        # Compute properties with error handling
-        try:
-            energy = rattled_atoms.get_potential_energy()
-            forces = rattled_atoms.get_forces()
-            stress = rattled_atoms.get_stress(voigt=True)
-
-            # Store properties in atoms object
-            rattled_atoms.info["energy"] = float(energy)
-            rattled_atoms.arrays["forces"] = forces
-            rattled_atoms.info["stress"] = stress.tolist()
-            rattled_atoms.info["calculator"] = calculator_name
-
-            # Write to trajectory
-            traj.write(rattled_atoms)
-
-        except Exception as e:
-            warnings.warn(
-                f"Structure {i + 1}/{n_struct} calculation failed: {e}. Skipping.",
-                RuntimeWarning,
-            )
-            skipped += 1
-            continue
+        # Write to trajectory
+        traj.write(rattled_atoms)
 
     # Close trajectory file
     traj.close()
 
     # Final summary
     if verbose:
-        print(f"\n[Rattle] Dataset generation complete!")
-        print(f"[Rattle] Successfully generated: {n_struct - skipped}/{n_struct}")
-        if skipped > 0:
-            print(f"[Rattle] Skipped (errors): {skipped}")
+        print("\n[Rattle] Dataset generation complete!")
+        print(f"[Rattle] Successfully generated: {n_struct} structures")
         print(f"[Rattle] Output saved to: {output}")
 
     return output
@@ -242,11 +197,11 @@ def mlrattle_cli():
 
     Example:
         $ mlrattle structure.cif --nstruct 100 --stdev 0.05 -o dataset.traj
-        $ mlrattle POSCAR --nstruct 50 --supercell 2,2,2 --model mace
+        $ mlrattle POSCAR --nstruct 50 --supercell 2,2,2
         $ mlrattle input.cif --nstruct 100 --stdev 0.05 --cell-stdev 0.02 --seed 42
     """
     parser = argparse.ArgumentParser(
-        description="Generate training datasets with random atomic displacements and ML calculations."
+        description="Generate training datasets with random atomic displacements."
     )
     parser.add_argument("fname", help="Input structure file (POSCAR, CIF, XYZ, etc.)")
     parser.add_argument(
@@ -262,18 +217,6 @@ def mlrattle_cli():
         type=float,
         default=0.05,
         help="Standard deviation for atomic displacements in Å (default: 0.05)",
-    )
-    parser.add_argument(
-        "--model",
-        "-m",
-        default="chgnet",
-        help="ML potential model: chgnet|m3gnet|mace|deepmd (default: chgnet)",
-    )
-    parser.add_argument(
-        "--model-path",
-        "-p",
-        default=None,
-        help="Path to custom model file (for deepmd, etc.)",
     )
     parser.add_argument(
         "--supercell",
@@ -325,7 +268,6 @@ def mlrattle_cli():
         print("Rattle Dataset Generation")
         print("=" * 60)
         print(f"Input structure: {args.fname}")
-        print(f"Calculator:      {args.model}")
         print(f"Structures:      {args.nstruct}")
         print(f"Atom stdev:      {args.stdev} Å")
         if args.cell_stdev is not None:
@@ -343,8 +285,6 @@ def mlrattle_cli():
             atoms=args.fname,
             n_struct=args.nstruct,
             stdev=args.stdev,
-            calc=args.model,
-            model_path=args.model_path,
             supercell=supercell,
             cell_stdev=args.cell_stdev,
             seed=args.seed,
@@ -354,10 +294,9 @@ def mlrattle_cli():
 
         # Print final summary
         if not args.quiet:
-            from ase.io import read
-
             structures = read(output_path, ":")
-            energies = [s.info["energy"] for s in structures]
+            if not isinstance(structures, list):
+                structures = [structures]
 
             print("\n" + "=" * 60)
             print("Dataset Summary")
@@ -365,9 +304,7 @@ def mlrattle_cli():
             print(f"Output file:     {output_path}")
             print(f"File size:       {Path(output_path).stat().st_size / 1024:.1f} KB")
             print(f"Structures:      {len(structures)}")
-            print(f"Energy range:    {min(energies):.4f} to {max(energies):.4f} eV")
-            print(f"Energy mean:     {np.mean(energies):.4f} eV")
-            print(f"Energy std:      {np.std(energies):.4f} eV")
+            print(f"Atoms per struct: {len(structures[0])}")
             print("=" * 60)
 
     except Exception as e:

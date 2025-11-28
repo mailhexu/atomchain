@@ -10,6 +10,7 @@ AtomChain includes several command-line tools for common atomistic workflows:
 - **`mlsupercell`** - Generate supercells with various transformation matrices
 - **`mlrattle`** - Generate rattled structure datasets for training
 - **`mlbatch`** - Batch process trajectories with ML potentials
+- **`mlcompare`** - Compare calculated properties between two trajectories
 - **`mlrelax`** - Relax atomic structures using ML potentials
 - **`mlphonon`** - Calculate phonon properties and band structures
 
@@ -41,6 +42,11 @@ mlrattle input.vasp --stdev 0.05 --count 100 --output structures.traj
 mlbatch structures.traj --calculator chgnet --output results.traj
 ```
 
+### Compare Trajectories
+```bash
+mlcompare dft.traj ml.traj --labels "DFT" "CHGNet" --output comparison.png
+```
+
 ### Relax Structure
 ```bash
 mlrelax input.vasp --calculator chgnet --output relaxed.vasp
@@ -59,6 +65,7 @@ Detailed documentation for each tool is available in the `docs/` directory:
 - [docs/supercell.md](docs/supercell.md) - Supercell generation
 - [docs/rattle.md](docs/rattle.md) - Dataset generation
 - [docs/batch.md](docs/batch.md) - Batch trajectory processing
+- [docs/compare.md](docs/compare.md) - Trajectory comparison
 - [docs/relax.md](docs/relax.md) - Structure relaxation
 - [docs/phonon.md](docs/phonon.md) - Phonon calculations
 
@@ -72,6 +79,7 @@ from atomchain.singlepoint import calculate_single_point
 from atomchain.supercell import make_supercell_structure
 from atomchain.rattle import generate_rattle_dataset
 from atomchain.batch import calculate_trajectory_batch
+from atomchain.compare import compare_trajectories
 
 # Single point calculation
 atoms = read("structure.vasp")

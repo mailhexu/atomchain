@@ -50,6 +50,8 @@ mlsinglepoint = "atomchain.singlepoint:mlsinglepoint_cli"
 mlsupercell = "atomchain.supercell:mlsupercell_cli"
 mlrattle = "atomchain.rattle:mlrattle_cli"
 mlbatch = "atomchain.batch:mlbatch_cli"
+mlcompare = "atomchain.compare:mlcompare_cli"
+mlneb = "atomchain.neb:mlneb_cli"
 
 [build-system]
 requires = ["setuptools>=61", "wheel"]

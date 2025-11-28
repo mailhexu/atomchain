@@ -133,8 +133,16 @@ def calculate_trajectory_batch(
 
             # Compute properties (this triggers the calculation)
             energy = atoms_copy.get_potential_energy()
-            _ = atoms_copy.get_forces()
-            _ = atoms_copy.get_stress(voigt=True)
+            forces = atoms_copy.get_forces()
+            stress = atoms_copy.get_stress(voigt=True)
+
+            # Replace calculator with SinglePointCalculator to ensure properties are saved
+            # This is necessary because some calculators (CHGNet, MACE) don't serialize well
+            from ase.calculators.singlepoint import SinglePointCalculator
+
+            atoms_copy.calc = SinglePointCalculator(
+                atoms_copy, energy=energy, forces=forces, stress=stress
+            )
 
             processed_structures.append(atoms_copy)
 

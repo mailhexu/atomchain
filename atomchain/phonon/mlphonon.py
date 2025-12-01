@@ -77,6 +77,8 @@ def phonon_with_ml(
             figname=figname,
             show=True,
         )
+    
+    return atoms
 
 
 def mlphonon_cli():

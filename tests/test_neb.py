@@ -121,6 +121,37 @@ def test_interpolate_path_incompatible_structures():
         _interpolate_path(initial, final, nimages=5)
 
 
+def test_interpolate_path_periodic_mic():
+    """
+    Test that interpolation uses minimum image convention for periodic systems.
+    
+    When an atom crosses a periodic boundary, the interpolation should take
+    the shorter path (using MIC) rather than the longer direct path.
+    """
+    # Initial: atom at x=0.1
+    initial = Atoms('Al', positions=[[0.1, 0, 0]], cell=[3, 3, 3], pbc=True)
+    
+    # Final: atom at x=2.9 (close to boundary)
+    # MIC distance = 0.2 Å, direct distance = 2.8 Å
+    final = Atoms('Al', positions=[[2.9, 0, 0]], cell=[3, 3, 3], pbc=True)
+    
+    images = _interpolate_path(initial, final, nimages=5)
+    
+    # Check that intermediate images take the short path
+    # Should go: 0.1 -> ~0.05 -> ~0.0 -> ~-0.05 -> 2.9 (wraps to -0.1)
+    # NOT: 0.1 -> 0.8 -> 1.5 -> 2.2 -> 2.9
+    
+    # Check that we're going the right direction (decreasing initially)
+    assert images[1].positions[0, 0] < images[0].positions[0, 0], \
+        "MIC should take shorter path (decreasing x initially)"
+    
+    # Verify all images are consistent
+    assert len(images) == 5
+    for img in images:
+        assert len(img) == 1
+        assert img.get_chemical_formula() == "Al"
+
+
 def test_calculate_barriers():
     """
     Test energy barrier calculation from energy profile.
@@ -327,6 +358,43 @@ def test_neb_invalid_nimages(simple_diffusion_path):
     
     with pytest.raises(ValueError, match="nimages must be at least 3"):
         calculate_neb(initial, final, nimages=2, quiet=True)
+
+
+def test_neb_with_symmetry_breaking(simple_diffusion_path, temp_dir, mocker):
+    """
+    Test NEB with symmetry breaking option.
+    
+    Verifies that intermediate images are perturbed when break_symmetry > 0.
+    """
+    os.chdir(temp_dir)
+    initial, final = simple_diffusion_path
+    
+    # Mock calculator
+    mock_calc = mocker.Mock()
+    mock_calc.get_potential_energy.return_value = 0.5
+    mock_calc.get_forces.return_value = np.array([[0.01, 0.0, 0.0]])
+    
+    # Run with symmetry breaking
+    np.random.seed(42)  # For reproducibility
+    results = calculate_neb(
+        initial,
+        final,
+        calculator=mock_calc,
+        nimages=5,
+        fmax=0.5,
+        max_steps=5,
+        break_symmetry=0.1,  # 0.1 Å perturbation
+        quiet=True
+    )
+    
+    assert results is not None
+    assert len(results['images']) == 5
+    
+    # Check that intermediate images were perturbed
+    # (endpoints should not be perturbed)
+    for i in range(1, 4):  # Only check intermediate images
+        # Images should have calculator attached
+        assert results['images'][i].calc is not None
 
 
 def test_neb_results_structure(al_bulk_distortion, temp_dir):

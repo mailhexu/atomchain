@@ -35,6 +35,7 @@ def _interpolate_path(
 
     The Image Dependent Pair Potential (IDPP) method provides better initial guesses
     than linear interpolation by solving a spring potential in interatomic distance space.
+    Uses minimum image convention (mic=True) to correctly handle periodic boundaries.
 
     Args:
         initial: Initial atomic structure
@@ -46,6 +47,10 @@ def _interpolate_path(
 
     Raises:
         ValueError: If nimages < 3 or structures are incompatible
+
+    Note:
+        For periodic systems, the interpolation automatically uses the shortest path
+        across periodic boundaries (minimum image convention).
     """
     if nimages < 3:
         raise ValueError(f"nimages must be at least 3, got {nimages}")
@@ -70,9 +75,9 @@ def _interpolate_path(
         images.append(initial_copy.copy())
     images.append(final_copy)
 
-    # Use IDPP for better interpolation
+    # Use IDPP for better interpolation with minimum image convention
     neb_idpp = NEB(images)
-    neb_idpp.interpolate(method='idpp')
+    neb_idpp.interpolate(method='idpp', mic=True)
 
     return images
 
@@ -217,6 +222,7 @@ def calculate_neb(
     quiet: bool = False,
     model_path: Optional[str] = None,
     climb: bool = True,
+    break_symmetry: float = 0.0,
 ) -> Dict:
     """
     Perform Climbing Image NEB calculation to find transition state path.
@@ -240,6 +246,8 @@ def calculate_neb(
         quiet: If True, suppress progress output (default: False)
         model_path: Path to model file for calculators that support it
         climb: Use climbing image method (default: True)
+        break_symmetry: Random displacement magnitude to break symmetry (Å, default: 0.0)
+                       Useful when initial guess is too symmetric and NEB gets stuck
 
     Returns:
         Dictionary with keys:
@@ -271,6 +279,12 @@ def calculate_neb(
         ...                        fmax=0.03,
         ...                        optimizer='BFGS',
         ...                        show=True)
+
+        >>> # Break symmetry for symmetric systems
+        >>> results = calculate_neb(initial_atoms, final_atoms,
+        ...                        calculator='chgnet',
+        ...                        break_symmetry=0.05,
+        ...                        nimages=7)
     """
     print_fn = (lambda *args, **kwargs: None) if quiet else print
 
@@ -317,8 +331,16 @@ def calculate_neb(
     print_fn(f"[NEB] Interpolating {nimages} images using IDPP...")
     images = _interpolate_path(initial_atoms, final_atoms, nimages)
 
-    # Attach calculator to intermediate images (not endpoints)
-    for img in images[1:-1]:
+    # Break symmetry if requested (helps with symmetric barriers)
+    if break_symmetry > 0:
+        print_fn(f"[NEB] Breaking symmetry with random displacements (±{break_symmetry:.3f} Å)...")
+        for i, img in enumerate(images[1:-1], start=1):  # Don't perturb endpoints
+            # Add small random displacements to intermediate images
+            displacements = np.random.uniform(-break_symmetry, break_symmetry, img.positions.shape)
+            img.positions += displacements
+
+    # Attach calculator to all images (including endpoints for energy extraction)
+    for img in images:
         img.calc = calc
 
     # Create NEB object
@@ -361,9 +383,18 @@ def calculate_neb(
     print_fn(f"[NEB] Reaction energy:  {barriers['reaction_energy']:.4f} eV")
     print_fn(f"[NEB] Transition state: Image {barriers['ts_index']}")
 
-    # Save trajectory
+    # Save trajectory with energies
     if output:
         print_fn(f"[NEB] Saving converged path to {output}...")
+        # Attach energies as SinglePointCalculator to preserve them
+        from ase.calculators.singlepoint import SinglePointCalculator
+        for i, (img, energy) in enumerate(zip(images, energies)):
+            # Get forces from the image if available
+            try:
+                forces = img.get_forces()
+            except:
+                forces = None
+            img.calc = SinglePointCalculator(img, energy=energy, forces=forces)
         write(str(output), images)
 
     # Create plot
@@ -474,6 +505,14 @@ Examples:
         action="store_true",
         help="Disable climbing image (not recommended)",
     )
+    parser.add_argument(
+        "--break-symmetry",
+        type=float,
+        default=0.0,
+        metavar="DISPLACEMENT",
+        help="Break symmetry with random displacements (Å). "
+             "Useful for symmetric barriers. Default: 0.0 (disabled)",
+    )
 
     args = parser.parse_args()
 
@@ -493,6 +532,7 @@ Examples:
             quiet=args.quiet,
             model_path=args.model_path,
             climb=not args.no_climb,
+            break_symmetry=args.break_symmetry,
         )
 
         # Print summary

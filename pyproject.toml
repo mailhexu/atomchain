@@ -1,6 +1,6 @@
 [project]
 name = "atomchain"
-version = "0.1.1"
+version = "0.1.2"
 description = "A library to chain the atomic models with applications"
 authors = [
     {name = "Xu He", email = "mailhexu@gmail.com"},
@@ -14,6 +14,7 @@ dependencies = [
     "ase",
     "phonopy",
     "pyyaml",
+    "pathos",
 ]
 
 
@@ -52,8 +53,8 @@ mlrattle = "atomchain.rattle:mlrattle_cli"
 mlbatch = "atomchain.batch:mlbatch_cli"
 
 [build-system]
-requires = ["setuptools>=61", "wheel"]
-build-backend = "setuptools.build_meta"
+requires = ["hatchling>=1.12.0"]
+build-backend = "hatchling.build"
 
 
 

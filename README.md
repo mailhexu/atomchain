@@ -6,13 +6,15 @@ AtomChain provides CLI tools and Python APIs for atomic structure manipulation a
 
 AtomChain includes several command-line tools for common atomistic workflows:
 
+- **`mlrelax`** - Relax atomic structures using ML potentials
+- **`mlphonon`** - Calculate phonon properties and band structures
+- **`mlgap`** - Predict band gap using ML potentials
 - **`mlsinglepoint`** - Single point energy/forces/stress calculations
 - **`mlsupercell`** - Generate supercells with various transformation matrices
 - **`mlrattle`** - Generate rattled structure datasets for training
 - **`mlbatch`** - Batch process trajectories with ML potentials
 - **`mlcompare`** - Compare calculated properties between two trajectories
-- **`mlrelax`** - Relax atomic structures using ML potentials
-- **`mlphonon`** - Calculate phonon properties and band structures
+- **`mlneb`** - Nudged elastic band calculations for reaction pathways
 
 ## Installation
 
@@ -75,14 +77,31 @@ All CLI tools have corresponding Python APIs for programmatic use:
 
 ```python
 from ase.io import read
-from atomchain.singlepoint import calculate_single_point
-from atomchain.supercell import make_supercell_structure
-from atomchain.rattle import generate_rattle_dataset
-from atomchain.batch import calculate_trajectory_batch
-from atomchain.compare import compare_trajectories
+from atomchain import (
+    relax_with_ml,
+    phonon_with_ml,
+    init_calc,
+    calculate_single_point,
+    make_supercell_structure,
+    generate_rattle_dataset,
+    calculate_trajectory_batch,
+    compare_trajectories,
+    calculate_neb,
+    predict_gap,
+)
+
+atoms = read("structure.vasp")
+
+# Relax structure
+relaxed_atoms = relax_with_ml(atoms, calculator="chgnet")
+
+# Calculate phonons
+phonon_with_ml(atoms, calculator="chgnet", supercell_matrix=[[2,0,0],[0,2,0],[0,0,2]])
+
+# Predict band gap
+gap = predict_gap(atoms, xc="PBE")
 
 # Single point calculation
-atoms = read("structure.vasp")
 results = calculate_single_point(atoms, calculator="chgnet")
 
 # Generate supercell
@@ -102,6 +121,13 @@ results = calculate_trajectory_batch(
     calculator="chgnet",
     output="results.traj"
 )
+
+# Compare trajectories
+compare_trajectories("dft.traj", "ml.traj", labels=["DFT", "CHGNet"])
+
+# NEB calculation
+images = [read(f"image{i}.vasp") for i in range(5)]
+calculate_neb(images, calculator="chgnet")
 ```
 
 ## Requirements

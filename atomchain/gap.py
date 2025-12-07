@@ -1,7 +1,5 @@
 import argparse
 
-import matgl
-import torch
 from ase.io import read
 
 

@@ -19,7 +19,7 @@ AtomChain includes several command-line tools for common atomistic workflows:
 ## Installation
 
 ```bash
-uv pip install -e .
+pip install -e .
 ```
 
 ## Quick Start

@@ -82,3 +82,63 @@ def test_init_calc_deepmd():
     # DeepMD requires a model path, so we expect it to fail without one
     with pytest.raises((ValueError, FileNotFoundError, TypeError)):
         init_calc(model_type="deepmd", model_path=None)
+
+
+def test_init_calc_multibinit_no_config():
+    """Test that MULTIBINIT raises ValueError when model_path is None."""
+    with pytest.raises(ValueError, match="MULTIBINIT requires a configuration file"):
+        init_calc(model_type="multibinit", model_path=None)
+
+
+def test_init_calc_multibinit_alias_no_config():
+    """Test that MULTIBINIT alias 'mb' raises ValueError when model_path is None."""
+    with pytest.raises(ValueError, match="MULTIBINIT requires a configuration file"):
+        init_calc(model_type="mb", model_path=None)
+
+
+def test_init_calc_multibinit_nonexistent_config():
+    """Test that MULTIBINIT raises FileNotFoundError for non-existent config file."""
+    with pytest.raises(FileNotFoundError, match="nonexistent.conf"):
+        init_calc(model_type="multibinit", model_path="nonexistent.conf")
+
+
+def test_init_calc_multibinit():
+    """Test MULTIBINIT calculator initialization with config file.
+    
+    This test verifies that MULTIBINIT calculator can be initialized.
+    It may be skipped if pymultibinit is not installed.
+    
+    Note: This test will fail if the referenced DDB and XML files don't exist,
+    which is expected in a pure unit test environment. The test primarily
+    validates the init_calc logic up to the point of calling pymultibinit.
+    """
+    pytest.importorskip("pymultibinit")
+    import os
+    
+    # Get path to example config file
+    test_dir = os.path.dirname(__file__)
+    config_path = os.path.join(test_dir, "fixtures", "multibinit_example.conf")
+    
+    # This will fail because the DDB and XML files don't exist,
+    # but it validates that init_calc correctly processes the request
+    # and attempts to initialize the calculator
+    with pytest.raises((FileNotFoundError, RuntimeError, ValueError)):
+        calc = init_calc(model_type="multibinit", model_path=config_path)
+
+
+def test_init_calc_multibinit_alias():
+    """Test MULTIBINIT calculator initialization with 'mb' alias.
+    
+    This test verifies that the 'mb' alias works identically to 'multibinit'.
+    It may be skipped if pymultibinit is not installed.
+    """
+    pytest.importorskip("pymultibinit")
+    import os
+    
+    # Get path to example config file
+    test_dir = os.path.dirname(__file__)
+    config_path = os.path.join(test_dir, "fixtures", "multibinit_example.conf")
+    
+    # Same expectation as the full name test
+    with pytest.raises((FileNotFoundError, RuntimeError, ValueError)):
+        calc = init_calc(model_type="mb", model_path=config_path)

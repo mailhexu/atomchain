@@ -2,6 +2,13 @@
 
 Complete documentation for AtomChain CLI tools and Python APIs.
 
+## Quick Links
+
+- 🚀 **[MULTIBINIT Tutorial](multibinit.md)** - Complete guide for MULTIBINIT effective potentials
+- 📖 [MD Guide](md.md) - Molecular dynamics with 7 different ensembles/thermostats
+- 📊 [Phonon Guide](phonon.md) - Calculate phonon band structures
+- 🔧 [Relax Guide](relax.md) - Structure optimization
+
 ## CLI Tools Overview
 
 AtomChain provides command-line tools for common atomistic modeling workflows:
@@ -15,47 +22,24 @@ AtomChain provides command-line tools for common atomistic modeling workflows:
 | `mlrelax` | Relax atomic structures | Structure file |
 | `mlphonon` | Calculate phonon properties | Phonopy files |
 
-## Detailed Documentation
+## Documentation by Topic
+
+### Getting Started
+- **[multibinit.md](multibinit.md)** - **MULTIBINIT Tutorial** (START HERE for MULTIBINIT users)
+  - Complete setup guide (installation, library path, config file)
+  - Workflow examples (relaxation, phonon, MD)
+  - Python API and troubleshooting
 
 ### Structure Manipulation
-- **[supercell.md](supercell.md)** - Generate supercells with various transformations
-  - Isotropic, diagonal, and matrix supercells
-  - Atom ordering options (cell-major/atom-major)
-  - VASP compatibility features
+- **[supercell.md](supercell.md)** - Generate supercells
+- **[rattle.md](rattle.md)** - Generate perturbed structures for training
 
-- **[rattle.md](rattle.md)** - Generate perturbed structure datasets
-  - Random atomic displacements for training data
-  - Supercell generation with cell strain
-  - Workflow for dataset generation and property calculation
-
-### Calculations with ML Potentials
-- **[batch.md](batch.md)** - Batch trajectory processing
-  - Calculate properties for all structures in a trajectory
-  - Efficient calculator reuse across structures
-  - Complete workflow: generation → calculation → analysis
-- **[singlepoint.md](singlepoint.md)** - Single point calculations
-  - Energy, forces, stress calculations
-  - Multiple calculator support (CHGNet, M3GNet, MACE)
-  - YAML output format
-- **[multibinit.md](multibinit.md)** - MULTIBINIT integration
-  - Configuration file format
-  - Relaxation with effective potentials
-  - Phonon calculations with effective potentials
-
-- **[relax.md](relax.md)** - Structure relaxation
-  - FIRE optimizer with convergence criteria
-  - Optional symmetry constraints
-  - Cell relaxation options
-
-- **[phonon.md](phonon.md)** - Phonon calculations
-  - Frozen phonon method with supercells
-  - Band structure plotting
-  - Phonopy integration
-
-- **[md.md](md.md)** - Molecular dynamics
-  - NVE, NVT, NPT ensembles
-  - Multiple thermostats (Langevin, Berendsen, Andersen, Bussi)
-  - Barostats for pressure control
+### Calculations
+- **[singlepoint.md](singlepoint.md)** - Energy/forces/stress calculations
+- **[relax.md](relax.md)** - Structure optimization
+- **[phonon.md](phonon.md)** - Phonon band structures
+- **[md.md](md.md)** - Molecular dynamics (NVE, NVT, NPT)
+- **[batch.md](batch.md)** - Batch process trajectories
 
 ## Quick Start Examples
 

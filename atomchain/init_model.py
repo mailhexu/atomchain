@@ -85,13 +85,13 @@ def init_calc(model_type="chgnet", model_path=None):
         except ImportError as e:
             raise ImportError(
                 "pymultibinit is required for MULTIBINIT calculator but is not installed. "
-                "Please install pymultibinit from: /Users/hexu/projects/abinit_git/pymultibinit_dev/pymultibinit"
+                "Please install pymultibinit."
             ) from e
 
         calc = MultibinitCalculator.from_config_file(model_path)
     else:
         raise ValueError(
             "model_type not recognized. The current supported models are: "
-            "'matgl', 'm3gnet', 'chgnet', 'deepmd', 'mace', 'xq', 'multibinit'"
+            "'matgl', 'm3gnet', 'chgnet', 'deepmd', 'mace', 'xq', 'multibinit', 'mb'"
         )
     return calc

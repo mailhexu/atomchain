@@ -53,6 +53,7 @@ mlrattle = "atomchain.rattle:mlrattle_cli"
 mlbatch = "atomchain.batch:mlbatch_cli"
 mlcompare = "atomchain.compare:mlcompare_cli"
 mlneb = "atomchain.neb:mlneb_cli"
+mlconvert = "atomchain.convert:mlconvert_cli"
 
 [build-system]
 requires = ["hatchling>=1.12.0"]

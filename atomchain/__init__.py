@@ -12,6 +12,15 @@ from atomchain.rattle import generate_rattle_dataset
 from atomchain.batch import calculate_trajectory_batch
 from atomchain.compare import compare_trajectories
 from atomchain.neb import calculate_neb
+from atomchain.md import (
+    md_nve_velocity_verlet,
+    md_nvt_langevin,
+    md_nvt_berendsen,
+    md_nvt_andersen,
+    md_nvt_bussi,
+    md_npt_berendsen,
+    md_npt,
+)
 
 __all__ = [
     "init_calc",
@@ -24,4 +33,11 @@ __all__ = [
     "calculate_trajectory_batch",
     "compare_trajectories",
     "calculate_neb",
+    "md_nve_velocity_verlet",
+    "md_nvt_langevin",
+    "md_nvt_berendsen",
+    "md_nvt_andersen",
+    "md_nvt_bussi",
+    "md_npt_berendsen",
+    "md_npt",
 ]

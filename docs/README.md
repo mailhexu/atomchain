@@ -37,6 +37,10 @@ AtomChain provides command-line tools for common atomistic modeling workflows:
   - Energy, forces, stress calculations
   - Multiple calculator support (CHGNet, M3GNet, MACE)
   - YAML output format
+- **[multibinit.md](multibinit.md)** - MULTIBINIT integration
+  - Configuration file format
+  - Relaxation with effective potentials
+  - Phonon calculations with effective potentials
 
 - **[relax.md](relax.md)** - Structure relaxation
   - FIRE optimizer with convergence criteria
@@ -47,6 +51,11 @@ AtomChain provides command-line tools for common atomistic modeling workflows:
   - Frozen phonon method with supercells
   - Band structure plotting
   - Phonopy integration
+
+- **[md.md](md.md)** - Molecular dynamics
+  - NVE, NVT, NPT ensembles
+  - Multiple thermostats (Langevin, Berendsen, Andersen, Bussi)
+  - Barostats for pressure control
 
 ## Quick Start Examples
 
@@ -86,8 +95,17 @@ from atomchain.rattle import generate_rattle_dataset
 # Calculations
 from atomchain.singlepoint import calculate_single_point
 from atomchain.batch import calculate_trajectory_batch
-from atomchain.relax import relax_structure
-from atomchain.phonon.mlphonon import calculate_phonon
+from atomchain.relax import relax_with_ml
+from atomchain.phonon.mlphonon import phonon_with_ml
+
+# Molecular dynamics
+from atomchain.md import (
+    md_nve_velocity_verlet,
+    md_nvt_langevin,
+    md_nvt_berendsen,
+    md_npt_berendsen,
+    md_npt
+)
 ```
 
 See individual documentation files for detailed API examples.

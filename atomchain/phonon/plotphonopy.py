@@ -8,6 +8,9 @@ ASE's built-in Brillouin zone path generation and modern Phonopy API.
 
 import os
 import numpy as np
+import matplotlib
+# Use Agg backend for non-interactive plotting (fixes macOS crashes)
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 from phonopy import load
 from ase.cell import Cell

@@ -4,6 +4,11 @@ A simple script to relax a structure with matgl.
 """
 
 import argparse
+import os
+
+# Set matplotlib backend to Agg to avoid crashes on macOS/headless environments
+import matplotlib
+matplotlib.use("Agg")
 
 import numpy as np
 from ase.io import read
@@ -76,62 +81,67 @@ def phonon_with_ml(
     # Special handling for MultibinitPotential to fix supercell reference structure
     # This fixes the issue where Phonopy generates element-grouped supercells
     # while MULTIBINIT expects unit-cell-grouped supercells (ASE-style).
-    potential = None
-    if hasattr(calc, "potential"):
-         potential = calc.potential
-    elif hasattr(calc, "calc") and hasattr(calc.calc, "potential"):
-         potential = calc.calc.potential
-    elif hasattr(calc, "__class__") and "MultibinitPotential" in calc.__class__.__name__:
-         potential = calc
+    # potential = None
+    # if hasattr(calc, "potential"):
+    #      potential = calc.potential
+    # elif hasattr(calc, "calc") and hasattr(calc.calc, "potential"):
+    #      potential = calc.calc.potential
+    # elif hasattr(calc, "__class__") and "MultibinitPotential" in calc.__class__.__name__:
+    #      potential = calc
 
-    if potential is not None and "MultibinitPotential" in potential.__class__.__name__:
-        try:
-            # Extract supercell dimensions
-            ndim_arg = phon_args.get("ndim", np.diag([2, 2, 2]))
+    # if potential is not None and "MultibinitPotential" in potential.__class__.__name__:
+    #     try:
+    #         # Extract supercell dimensions
+    #         ndim_arg = phon_args.get("ndim", np.diag([2, 2, 2]))
             
-            # Convert ndim to tuple of integers for repeat()
-            repeat_tuple = None
-            if isinstance(ndim_arg, np.ndarray):
-                if ndim_arg.shape == (3, 3):
-                    # Extract diagonal elements for supercell size
-                    nx = int(np.round(np.linalg.norm(ndim_arg[:, 0])))
-                    ny = int(np.round(np.linalg.norm(ndim_arg[:, 1])))
-                    nz = int(np.round(np.linalg.norm(ndim_arg[:, 2])))
-                    repeat_tuple = (nx, ny, nz)
-                else:
-                    repeat_tuple = tuple(int(x) for x in ndim_arg.flatten()[:3])
-            elif isinstance(ndim_arg, (list, tuple)):
-                if len(ndim_arg) == 3:
-                     repeat_tuple = tuple(int(x) for x in ndim_arg)
+    #         # Convert ndim to tuple of integers for repeat()
+    #         repeat_tuple = None
+    #         if isinstance(ndim_arg, np.ndarray):
+    #             if ndim_arg.shape == (3, 3):
+    #                 # Extract diagonal elements for supercell size
+    #                 nx = int(np.round(np.linalg.norm(ndim_arg[:, 0])))
+    #                 ny = int(np.round(np.linalg.norm(ndim_arg[:, 1])))
+    #                 nz = int(np.round(np.linalg.norm(ndim_arg[:, 2])))
+    #                 repeat_tuple = (nx, ny, nz)
+    #             else:
+    #                 repeat_tuple = tuple(int(x) for x in ndim_arg.flatten()[:3])
+    #         elif isinstance(ndim_arg, (list, tuple)):
+    #             if len(ndim_arg) == 3:
+    #                  repeat_tuple = tuple(int(x) for x in ndim_arg)
                 
-            if repeat_tuple:
-                # Create ASE supercell reference (has correct ordering for MULTIBINIT)
-                # atoms is the unit cell here
-                print(f"PyMultibinit: Setting reference structure for {repeat_tuple} supercell")
-                ase_supercell = atoms.repeat(repeat_tuple)
+    #         if repeat_tuple:
+    #             # Create ASE supercell reference (has correct ordering for MULTIBINIT)
+    #             # atoms is the unit cell here
+    #             print(f"PyMultibinit: Setting reference structure for {repeat_tuple} supercell")
+    #             ase_supercell = atoms.repeat(repeat_tuple)
                 
-                potential.set_reference_structure(
-                    positions=ase_supercell.positions,
-                    lattice=ase_supercell.cell.array
-                )
-        except Exception as e:
-            print(f"PyMultibinit WARNING: Failed to set reference structure: {e}")
+    #             potential.set_reference_structure(
+    #                 positions=ase_supercell.positions,
+    #                 lattice=ase_supercell.cell.array
+    #             )
+    #     except Exception as e:
+    #         print(f"PyMultibinit WARNING: Failed to set reference structure: {e}")
 
     calculate_phonon(atoms, calc=calc, **phon_args)
 
     if plot:
-        from atomchain.phonon.plotphonopy import plot_phonon
+        try:
+            from atomchain.phonon.plotphonopy import plot_phonon
 
-        # Construct kpath string from knames if provided
-        kpath = knames if isinstance(knames, str) else None
+            # Construct kpath string from knames if provided
+            kpath = knames if isinstance(knames, str) else None
 
-        plot_phonon(
-            path="phonon_save",
-            kpath=kpath,
-            npoints=npoints,
-            figname=figname,
-            show=True,
-        )
+            plot_phonon(
+                path="phonon_save",
+                kpath=kpath,
+                npoints=npoints,
+                figname=figname,
+                show=False,
+            )
+        except Exception as e:
+            print(f"Warning: Plotting failed: {e}")
+            import traceback
+            traceback.print_exc()
     
     return atoms
 
@@ -181,7 +191,7 @@ def mlphonon_cli():
         default=100,
     )
     p.add_argument(
-        "--figname", "-f", help="name of the band structure plot.", default="phonon.pdf"
+        "--figname", "-f", help="name of the band structure plot.", default="phonon.png"
     )
     args = p.parse_args()
     atoms = read(args.fname)

@@ -12,11 +12,11 @@ MULTIBINIT provides effective potentials trained from DFT that enable fast calcu
 
 ## Setup
 
-### 1. Install PyMultibinit
+### 1. Install PyMultibinit and atomchain
 
 ```bash
-cd pymultibinit
-uv sync  # or: pip install -e .
+pip install pymultibinit
+pip install atomchain
 ```
 
 ### 2. Set Library Path

@@ -85,7 +85,12 @@ def _load_forces_from_file(forces_set_file):
 
 def _load_forces_from_pickle(phonon, restart, phonon_save_dir):
     """
-    Load forces from pickle file if it exists.
+    Load forces from pickle file if it exists and restart=True.
+
+    Args:
+        phonon: Phonopy object
+        restart: If True, load and reuse saved forces. If False, recalculate all forces.
+        phonon_save_dir: Directory containing the pickle file
 
     Returns:
         tuple: (set_of_forces, iskip, is_complete)
@@ -93,6 +98,10 @@ def _load_forces_from_pickle(phonon, restart, phonon_save_dir):
             - iskip: number of force sets to skip
             - is_complete: True if all forces are loaded from pickle
     """
+    # If restart=False, never load pickle data (always recalculate)
+    if not restart:
+        return [], 0, False
+    
     pickle_file = os.path.join(phonon_save_dir, "forces_set.pickle")
     if not os.path.exists(pickle_file):
         return [], 0, False
@@ -112,13 +121,9 @@ def _load_forces_from_pickle(phonon, restart, phonon_save_dir):
         print(
             f"[Phonopy] Incomplete force sets ({len(set_of_forces)}/{n_expected}), will calculate remaining"
         )
-
-        if restart:
-            iskip = len(set_of_forces)
-            print(f"[Phonopy] Restart mode: found {iskip} existing force sets")
-            return set_of_forces, iskip, False
-        else:
-            return [], 0, False
+        iskip = len(set_of_forces)
+        print(f"[Phonopy] Restart mode: found {iskip} existing force sets")
+        return set_of_forces, iskip, False
 
 
 def _prepare_initial_wavecar(supercell0, calc, is_mag, sc_mag, phonon_save_dir):
@@ -135,7 +140,7 @@ def _prepare_initial_wavecar(supercell0, calc, is_mag, sc_mag, phonon_save_dir):
         cell.set_initial_magnetic_moments(sc_mag)
 
     write(os.path.join(phonon_save_dir, "Supercell.cif"), cell)
-    mcalc = copy.deepcopy(calc)
+    mcalc = copy.copy(calc)
     cell.calc = mcalc
 
     dir_name = os.path.join(phonon_save_dir, "SUPERCELL0")
@@ -178,7 +183,7 @@ def _create_force_calculator(
         if is_mag:
             cell.set_initial_magnetic_moments(sc_mag)
 
-        cell.calc = copy.deepcopy(calc)
+        cell.calc = copy.copy(calc)
 
         dir_name = os.path.join(phonon_save_dir, "PHON_CELL%s" % iscell)
         cur_dir = os.getcwd()

@@ -7,7 +7,8 @@ from __future__ import annotations
 
 import argparse
 
-from ase.constraints import FixAtoms, UnitCellFilter
+from ase.constraints import FixAtoms
+from ase.filters import  UnitCellFilter
 from ase.io import Trajectory, read, write
 from ase.optimize import FIRE
 

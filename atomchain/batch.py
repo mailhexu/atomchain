@@ -127,6 +127,10 @@ def calculate_trajectory_batch(
         try:
             # Make a copy to avoid modifying original
             atoms_copy = atoms.copy()
+            # Use .extxyz format to preserve PBC information
+            # VASP (.vasp) format does not preserve PBC=False (always assumes periodic)
+            # This is critical because PBC affects energy calculations significantly
+            atoms_copy.write(f"atoms_{i}.extxyz")
 
             # Attach calculator
             atoms_copy.calc = calc

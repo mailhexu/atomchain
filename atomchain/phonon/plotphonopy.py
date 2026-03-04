@@ -55,7 +55,7 @@ def group_band_path(bp, eps=1e-8, shift=0.15):
 
 
 def plot_phonon(
-    path="phonon_save",
+    path="./",
     kpath=None,
     npoints=100,
     color="blue",

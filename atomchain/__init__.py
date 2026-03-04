@@ -12,6 +12,7 @@ from atomchain.rattle import generate_rattle_dataset
 from atomchain.batch import calculate_trajectory_batch
 from atomchain.compare import compare_trajectories
 from atomchain.neb import calculate_neb
+from atomchain.collect import collect_structures
 
 __all__ = [
     "init_calc",
@@ -24,4 +25,5 @@ __all__ = [
     "calculate_trajectory_batch",
     "compare_trajectories",
     "calculate_neb",
+    "collect_structures",
 ]

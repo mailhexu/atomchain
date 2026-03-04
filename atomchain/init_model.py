@@ -58,10 +58,22 @@ def init_calc(model_type="chgnet", model_path=None):
         calc = DP(model=model_path)
     elif model_type.lower() == "mace":
         from mace.calculators import mace_mp
-
         calc = mace_mp(
             model="medium", dispersion=False, default_dtype="float32", device="cpu"
         )
+    elif model_type.lower() == "mace-r2scan":
+        from mace.calculators import mace_mp
+        #calc = mace_mp(
+        #    model="medium", dispersion=False, default_dtype="float32", device="cpu"
+        #)
+        mace_model_file=os.path.expanduser("~/.config/mace/mace-mh-1.model")
+        if not os.path.exists(mace_model_file):
+            raise Exception("""MACE MODEL file for r2scan is not found. 
+            Download it from https://github.com/ACEsuit/mace-foundations/releases, 
+            and put to ~/.config/mace/mace-mh-1.model""")
+        calc=mace_mp(os.path.expanduser("~/.config/mace/mace-mh-1.model"), device="cpu", default_dtype="float32",
+             dispersion=False, dispersion_xc="pbe", head="matpes_r2scan")
+
     elif model_type.lower() == "xq":
         from atomic_potential_xq.calculator import XQCalculator
 
@@ -85,13 +97,13 @@ def init_calc(model_type="chgnet", model_path=None):
         except ImportError as e:
             raise ImportError(
                 "pymultibinit is required for MULTIBINIT calculator but is not installed. "
-                "Please install pymultibinit from: /Users/hexu/projects/abinit_git/pymultibinit_dev/pymultibinit"
+                "Please install pymultibinit."
             ) from e
 
         calc = MultibinitCalculator.from_config_file(model_path)
     else:
         raise ValueError(
             "model_type not recognized. The current supported models are: "
-            "'matgl', 'm3gnet', 'chgnet', 'deepmd', 'mace', 'xq', 'multibinit'"
+            "'matgl', 'm3gnet', 'chgnet', 'deepmd', 'mace', 'xq', 'multibinit', 'mb'"
         )
     return calc

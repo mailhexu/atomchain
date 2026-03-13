@@ -34,9 +34,7 @@ __all__ = [
     "calculate_trajectory_batch",
     "compare_trajectories",
     "calculate_neb",
-<<<<<<< HEAD
     "collect_structures",
-=======
     "md_nve_velocity_verlet",
     "md_nvt_langevin",
     "md_nvt_berendsen",
@@ -44,5 +42,4 @@ __all__ = [
     "md_nvt_bussi",
     "md_npt_berendsen",
     "md_npt",
->>>>>>> bba2a385774b0e356af549fae19dc11147368b03
 ]

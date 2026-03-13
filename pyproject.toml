@@ -1,6 +1,6 @@
 [project]
 name = "atomchain"
-version = "0.1.5"
+version = "0.1.7"
 description = "A library to chain the atomic models with applications"
 authors = [
     {name = "Xu He", email = "mailhexu@gmail.com"},
@@ -53,11 +53,8 @@ mlrattle = "atomchain.rattle:mlrattle_cli"
 mlbatch = "atomchain.batch:mlbatch_cli"
 mlcompare = "atomchain.compare:mlcompare_cli"
 mlneb = "atomchain.neb:mlneb_cli"
-<<<<<<< HEAD
 mlcollect = "atomchain.collect:mlcollect_cli"
-=======
 mlconvert = "atomchain.convert:mlconvert_cli"
->>>>>>> bba2a385774b0e356af549fae19dc11147368b03
 
 [build-system]
 requires = ["hatchling>=1.12.0"]

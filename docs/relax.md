@@ -26,13 +26,13 @@ mlrelax POSCAR --fix_atoms 0 1 2 -o relaxed.vasp
 
 ### Options
 - `fname` - Input structure file (POSCAR, CIF, XYZ, etc.)
-- `--model, -m` - ML model: `chgnet` (default), `m3gnet`, `mace`, `deepmd`
+- `--model, -m` - Calculator name accepted by `init_calc()` (default: `chgnet`), such as `chgnet`, `m3gnet`, `matgl`, `mace`, `mace-r2scan`, `deepmd`, `multibinit`, or `mb`
 - `--relax_cell, -r` - Relax cell shape (default: False, positions only)
 - `--sym, -s` - Apply symmetry constraints (default: False)
 - `--fmax, -f` - Max force convergence in eV/Å (default: 0.001)
 - `--cell_factor, -c` - Cell scaling factor for stress (default: 1000)
 - `--output_file, -o` - Output file (default: `POSCAR_relax.vasp`)
-- `--model_path, -p` - Path to custom model (for DeePMD, default: `model.dp`)
+- `--model_path, -p` - Path to custom model/config file (default: `model.dp`)
 - `--fix_atoms, -fa` - Indices of atoms to fix (e.g., `0 1 2`)
 
 ## Python API
@@ -89,7 +89,7 @@ write('relaxed.vasp', relaxed)
 - `traj_file` - Trajectory file name (default: `'relax.traj'`)
 - `model_path` - Path to custom model file (optional)
 - `fmax` - Force convergence criterion in eV/Å (default: 0.001)
-- `cell_factor` - Cell stress scaling factor (default: 1000)
+- `cell_factor` - Cell stress scaling factor (Python API default: 50; CLI default: 1000)
 - `rattle` - Initial random displacement (optional)
 - `fix_atoms` - List of atom indices to fix (optional)
 - `**ucf_kwargs` - Additional UnitCellFilter arguments

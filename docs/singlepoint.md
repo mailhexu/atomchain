@@ -17,9 +17,9 @@ mlsinglepoint structure.cif -m deepmd -p model.pb -o results.yaml
 
 ### Options
 - `fname` - Input structure file (POSCAR, CIF, XYZ, etc.)
-- `--model, -m` - ML model: `chgnet` (default), `m3gnet`, `mace`, `deepmd`
+- `--model, -m` - Calculator name accepted by `init_calc()` (default: `chgnet`), such as `chgnet`, `m3gnet`, `matgl`, `mace`, `mace-r2scan`, `deepmd`, `multibinit`, or `mb`
 - `--output_file, -o` - Output YAML file (default: `singlepoint_result.yaml`)
-- `--model_path, -p` - Path to custom model file
+- `--model_path, -p` - Optional model/config path for calculators that need one
 
 ## Python API
 

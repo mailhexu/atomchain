@@ -1,6 +1,6 @@
 # atomchain
 
-AtomChain provides CLI tools and Python APIs for atomic structure manipulation and ML potential calculations.
+AtomChain provides CLI tools and Python APIs for atomic structure manipulation, ML-potential calculations, phonon/DDB workflows, and ABINIT HIST/MULTIBINIT training artifact preparation.
 
 ## CLI Tools
 
@@ -15,6 +15,9 @@ AtomChain includes several command-line tools for common atomistic workflows:
 - **`mlbatch`** - Batch process trajectories with ML potentials
 - **`mlcompare`** - Compare calculated properties between two trajectories
 - **`mlneb`** - Nudged elastic band calculations for reaction pathways
+- **`mlcollect`** - Collect structures from many files into one trajectory
+- **`mlconvert`** - Convert structures between ASE-supported file formats
+- **`mlmetastable`** - Explore symmetry-mode metastable structures
 - **`mlddb`** - Write ABINIT-style DDB files from phonopy and ML finite-difference workflows
 - **`mlhist`** - Convert between ABINIT HIST.nc and ASE trajectory files
 - **`mltraining`** - Generate MULTIBINIT training trajectories/artifacts and delegate training to pymultibinit
@@ -22,14 +25,16 @@ AtomChain includes several command-line tools for common atomistic workflows:
 ## Installation
 
 ```bash
-pip install -e .
+uv sync
 ```
+
+For editable installation with `pip`, use `pip install -e .` from the repository root.
 
 ## Quick Start
 
 ### Single Point Calculation
 ```bash
-mlsinglepoint input.vasp --calculator chgnet --output results.yaml
+mlsinglepoint input.vasp --model chgnet --output_file results.yaml
 ```
 
 ### Generate Supercell
@@ -39,7 +44,7 @@ mlsupercell input.vasp --size 2 --output supercell.vasp
 
 ### Generate Training Dataset
 ```bash
-mlrattle input.vasp --stdev 0.05 --count 100 --output structures.traj
+mlrattle input.vasp --stdev 0.05 --nstruct 100 --output structures.traj
 ```
 
 ### Batch Process Trajectory
@@ -54,12 +59,12 @@ mlcompare dft.traj ml.traj --labels "DFT" "CHGNet" --output comparison.png
 
 ### Relax Structure
 ```bash
-mlrelax input.vasp --calculator chgnet --output relaxed.vasp
+mlrelax input.vasp --model chgnet --output_file relaxed.vasp
 ```
 
 ### Calculate Phonons
 ```bash
-mlphonon input.vasp --calculator chgnet --supercell 2,2,2
+mlphonon input.vasp --model chgnet --ndim 2 2 2
 ```
 
 ### Write DDB From Phonopy
@@ -88,6 +93,8 @@ Detailed documentation for each tool is available in the `docs/` directory:
 - [docs/compare.md](docs/compare.md) - Trajectory comparison
 - [docs/relax.md](docs/relax.md) - Structure relaxation
 - [docs/phonon.md](docs/phonon.md) - Phonon calculations
+- [docs/md.md](docs/md.md) - Molecular dynamics
+- [docs/multibinit.md](docs/multibinit.md) - MULTIBINIT calculator usage through pymultibinit
 - [docs/ddb.md](docs/ddb.md) - ABINIT-style DDB writer
 - [docs/hist_training.md](docs/hist_training.md) - ABINIT HIST and MULTIBINIT training artifacts
 
@@ -98,43 +105,43 @@ All CLI tools have corresponding Python APIs for programmatic use:
 ```python
 from ase.io import read
 from atomchain import (
-    relax_with_ml,
-    phonon_with_ml,
-    init_calc,
     calculate_single_point,
-    make_supercell_structure,
-    generate_rattle_dataset,
     calculate_trajectory_batch,
-    compare_trajectories,
     calculate_neb,
-    predict_gap,
-    read_abinit_hist,
-    write_abinit_hist,
+    compare_trajectories,
+    explore_metastable_states,
+    generate_multibinit_training_artifacts,
+    generate_rattle_dataset,
     generate_training_trajectory,
+    init_calc,
+    make_supercell_structure,
+    phonon_with_ml,
+    read_abinit_hist,
+    relax_with_ml,
+    write_ddb_from_finite_difference,
+    write_ddb_from_phonopy,
+    write_abinit_hist,
 )
 
 atoms = read("structure.vasp")
 
 # Relax structure
-relaxed_atoms = relax_with_ml(atoms, calculator="chgnet")
+relaxed_atoms = relax_with_ml(atoms, calc="chgnet")
 
 # Calculate phonons
-phonon_with_ml(atoms, calculator="chgnet", supercell_matrix=[[2,0,0],[0,2,0],[0,0,2]])
-
-# Predict band gap
-gap = predict_gap(atoms, xc="PBE")
+phonon_with_ml(atoms, calc="chgnet", ndim=[[2, 0, 0], [0, 2, 0], [0, 0, 2]])
 
 # Single point calculation
-results = calculate_single_point(atoms, calculator="chgnet")
+results = calculate_single_point(atoms, calc="chgnet")
 
 # Generate supercell
-supercell = make_supercell_structure(atoms, size=2)
+supercell = make_supercell_structure(atoms, 2)
 
 # Generate dataset
 generate_rattle_dataset(
     atoms,
     stdev=0.05,
-    count=100,
+    n_struct=100,
     output="dataset.traj"
 )
 
@@ -149,8 +156,9 @@ results = calculate_trajectory_batch(
 compare_trajectories("dft.traj", "ml.traj", labels=["DFT", "CHGNet"])
 
 # NEB calculation
-images = [read(f"image{i}.vasp") for i in range(5)]
-calculate_neb(images, calculator="chgnet")
+initial = read("initial.vasp")
+final = read("final.vasp")
+calculate_neb(initial, final, calculator="chgnet")
 
 # HIST conversion and training trajectory generation
 frames = generate_training_trajectory(atoms, sources=["phonon_modes"], evaluate=False)
@@ -160,11 +168,11 @@ loaded_frames = read_abinit_hist("training_HIST.nc")
 
 ## Requirements
 
-- Python 3.9+
+- Python 3.8+
 - ASE (Atomic Simulation Environment)
-- Optional: CHGNet, M3GNet, MACE for ML potentials
-- Optional: Phonopy for phonon analysis
+- Phonopy
+- Optional: CHGNet, M3GNet, matgl, MACE, DeePMD-kit, atomic_potential_xq, and pymultibinit depending on selected calculator/workflow
 
 ## License
 
-[Your license here]
+BSD-2-Clause

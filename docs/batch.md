@@ -6,22 +6,23 @@ Calculate energy, forces, and stress for all structures in a trajectory file usi
 
 ```bash
 # Basic batch processing
-mlbatch input.traj --calc chgnet -o results.traj
+mlbatch input.traj --calculator chgnet -o results.traj
 
 # Process with MACE
-mlbatch dataset.traj --calc mace -o with_properties.traj
+mlbatch dataset.traj --calculator mace -o with_properties.traj
 
 # Quiet mode (no progress output)
-mlbatch input.traj --calc chgnet -o results.traj --quiet
+mlbatch input.traj --calculator chgnet -o results.traj --quiet
 
 # Verbose mode (detailed output)
-mlbatch input.traj --calc chgnet -o results.traj --verbose
+mlbatch input.traj --calculator chgnet -o results.traj --verbose
 ```
 
 ### Options
 - `trajectory` - Input trajectory file (POSCAR, CIF, XYZ, .traj, etc.)
-- `--calc, -c` - Calculator: `chgnet`, `mace`, or any ASE calculator name
-- `--output, -o` - Output trajectory file (default: `batch_results.traj`)
+- `--calculator, --model, -m` - Calculator name (default: `chgnet`)
+- `--model-path, -p` - Optional model/config path for calculators that need one
+- `--output, -o` - Output trajectory file (default: `batch_output.traj`)
 - `--verbose, -v` - Show detailed progress information
 - `--quiet, -q` - Suppress all output except errors
 
@@ -65,7 +66,8 @@ for atoms in results:
 ### Parameters
 - `trajectory` - Input trajectory file path or list of ASE Atoms objects
 - `calculator` - Calculator instance or string name ('chgnet', 'mace', etc.)
-- `output` - Output trajectory file path (default: `'batch_results.traj'`)
+- `model_path` - Optional model/config path for calculators that need one
+- `output` - Output trajectory file path (default: `'batch_output.traj'`)
 - `verbose` - Show detailed progress (default: `False`)
 - `quiet` - Suppress all output (default: `False`)
 
@@ -118,7 +120,7 @@ print(f"  Mean |force|: {np.mean([np.linalg.norm(f) for f in forces]):.3f} eV/Å
 mlrattle POSCAR --nstruct 100 --stdev 0.05 --supercell 2,2,2 -o dataset.traj
 
 # Calculate properties
-mlbatch dataset.traj --calc chgnet -o results.traj --verbose
+mlbatch dataset.traj --calculator chgnet -o results.traj --verbose
 
 # Analyze (Python script or interactive session)
 python analyze_results.py results.traj
@@ -130,8 +132,11 @@ The tool supports any ASE-compatible calculator:
 
 **Built-in shortcuts:**
 - `chgnet` - CHGNet universal potential
-- `mace` - MACE universal potential
-- `emt` - Effective Medium Theory (testing only)
+- `m3gnet` / `matgl` - M3GNet-family potentials
+- `mace` / `mace-r2scan` - MACE foundation models
+- `deepmd` - DeePMD-kit with `--model-path`
+- `multibinit` / `mb` - MULTIBINIT through `pymultibinit` with `--model-path`
+- `xq` - XQ calculator if installed
 
 **Custom calculators:**
 ```python

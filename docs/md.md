@@ -197,8 +197,10 @@ All MD functions support any calculator from `init_calc()`:
 - `multibinit` - ABINIT MULTIBINIT effective potentials
 - `chgnet` - CHGNet materials property prediction
 - `m3gnet` - M3GNet graph neural networks
+- `matgl` - matgl M3GNet potential shortcut
 - `deepmd` - DeePMD-kit potentials
-- `mace` - MACE neural networks
+- `mace` / `mace-r2scan` - MACE neural networks
+- `xq` - XQ calculator if installed
 - Custom ASE calculators (pass calculator object)
 
 ## Tips

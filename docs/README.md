@@ -4,10 +4,10 @@ Complete documentation for AtomChain CLI tools and Python APIs.
 
 ## Quick Links
 
-- 🚀 **[MULTIBINIT Tutorial](multibinit.md)** - Complete guide for MULTIBINIT effective potentials
-- 📖 [MD Guide](md.md) - Molecular dynamics with 7 different ensembles/thermostats
-- 📊 [Phonon Guide](phonon.md) - Calculate phonon band structures
-- 🔧 [Relax Guide](relax.md) - Structure optimization
+- **[MULTIBINIT Tutorial](multibinit.md)** - MULTIBINIT calculator use through `pymultibinit`
+- **[DDB Guide](ddb.md)** - ABINIT-style DDB writer from phonopy and finite-difference workflows
+- **[HIST/Training Guide](hist_training.md)** - ABINIT HIST conversion and MULTIBINIT training artifacts
+- **[MD Guide](md.md)** - Molecular dynamics with ML calculators
 
 ## CLI Tools Overview
 
@@ -19,16 +19,27 @@ AtomChain provides command-line tools for common atomistic modeling workflows:
 | `mlsupercell` | Generate supercells with transformation matrices | Structure file |
 | `mlrattle` | Generate rattled structure datasets | Trajectory file |
 | `mlbatch` | Batch process trajectories with ML potentials | Trajectory file |
+| `mlcompare` | Compare two property-bearing trajectories | Plot and metrics |
 | `mlrelax` | Relax atomic structures | Structure file |
 | `mlphonon` | Calculate phonon properties | Phonopy files |
+| `mlgap` | Predict MatGL band gaps | Console output |
+| `mlneb` | Run NEB pathway calculations | Images, trajectory/log files |
+| `mlcollect` | Collect structures into one trajectory | Trajectory file |
+| `mlconvert` | Convert between ASE-supported formats | Structure/trajectory file |
+| `mlmetastable` | Explore symmetry-mode metastable structures | Structures, reports, plots |
+| `mlddb` | Write ABINIT-style DDB files | `.ddb` plus `.ddb.yaml` |
+| `mlhist` | Convert ASE trajectory and ABINIT HIST.nc | `.traj` or `HIST.nc` |
+| `mltraining` | Generate/delegate MULTIBINIT training artifacts | Trajectory, DDB, HIST, delegated output |
 
 ## Documentation by Topic
 
 ### Getting Started
 - **[multibinit.md](multibinit.md)** - **MULTIBINIT Tutorial** (START HERE for MULTIBINIT users)
-  - Complete setup guide (installation, library path, config file)
-  - Workflow examples (relaxation, phonon, MD)
+  - Calculator setup and config file examples
+  - Workflow examples for relaxation, phonons, and MD
   - Python API and troubleshooting
+- **[ddb.md](ddb.md)** - ABINIT-style DDB writer subset, units, q-grid, and validation
+- **[hist_training.md](hist_training.md)** - ABINIT HIST I/O and MULTIBINIT training artifact generation
 
 ### Structure Manipulation
 - **[supercell.md](supercell.md)** - Generate supercells
@@ -40,6 +51,7 @@ AtomChain provides command-line tools for common atomistic modeling workflows:
 - **[phonon.md](phonon.md)** - Phonon band structures
 - **[md.md](md.md)** - Molecular dynamics (NVE, NVT, NPT)
 - **[batch.md](batch.md)** - Batch process trajectories
+- **[compare.md](compare.md)** - Compare trajectories with energy/force/stress metrics
 
 ## Quick Start Examples
 
@@ -49,22 +61,25 @@ AtomChain provides command-line tools for common atomistic modeling workflows:
 mlsupercell POSCAR --size 2 --output POSCAR_2x2x2
 
 # 2. Calculate single point properties
-mlsinglepoint POSCAR_2x2x2 --calculator chgnet --output results.yaml
+mlsinglepoint POSCAR_2x2x2 --model chgnet --output_file results.yaml
 
 # 3. Relax the structure
-mlrelax POSCAR_2x2x2 --calculator chgnet --output POSCAR_relaxed
+mlrelax POSCAR_2x2x2 --model chgnet --output_file POSCAR_relaxed
 
 # 4. Calculate phonons
-mlphonon POSCAR_relaxed --calculator chgnet --supercell 2,2,2
+mlphonon POSCAR_relaxed --model chgnet --ndim 2 2 2
 ```
 
 ### Training Dataset Generation
 ```bash
 # Generate 100 rattled structures for training
-mlrattle POSCAR --stdev 0.05 --count 100 --output training_structures.traj
+mlrattle POSCAR --stdev 0.05 --nstruct 100 --output training_structures.traj
 
 # Calculate properties in batch
 mlbatch training_structures.traj --calculator chgnet --output training_data.traj
+
+# Convert to ABINIT HIST.nc for MULTIBINIT-oriented workflows
+mlhist training_data.traj training_HIST.nc --to hist
 ```
 
 ## Python API
@@ -88,8 +103,13 @@ from atomchain.md import (
     md_nvt_langevin,
     md_nvt_berendsen,
     md_npt_berendsen,
-    md_npt
+    md_npt,
 )
+
+# DDB/HIST/training workflows
+from atomchain.ddb import write_ddb_from_finite_difference, write_ddb_from_phonopy
+from atomchain.io import read_abinit_hist, write_abinit_hist
+from atomchain.training import generate_multibinit_training_artifacts, generate_training_trajectory
 ```
 
 See individual documentation files for detailed API examples.
@@ -106,17 +126,20 @@ Input/Output formats supported by ASE:
 ## Calculator Support
 
 Supported ML potential calculators:
-- **CHGNet** - Materials property prediction
-- **M3GNet** - Multi-element graph networks
-- **MACE** - Message passing neural networks
-- Custom ASE calculators (via Python API)
+- **CHGNet** - Materials property prediction (`chgnet`)
+- **M3GNet/matgl** - Graph-network potentials (`m3gnet`, `matgl`)
+- **MACE** - Foundation models including `mace` and project-specific `mace-r2scan`
+- **DeePMD-kit** - `deepmd` with a model path
+- **MULTIBINIT** - `multibinit`/`mb` through `pymultibinit` with a config file
+- **XQ** - `xq` if `atomic_potential_xq` is installed
+- Custom ASE calculators via Python APIs
 
 ## Requirements
 
-- Python 3.9+
+- Python 3.8+
 - ASE (Atomic Simulation Environment)
-- Optional: CHGNet, M3GNet, MACE for specific calculators
-- Optional: Phonopy for phonon analysis and visualization
+- Phonopy
+- Optional calculator packages depending on the selected model: CHGNet, M3GNet/matgl, MACE, DeePMD-kit, pymultibinit, atomic_potential_xq
 
 ## Getting Help
 
@@ -128,6 +151,9 @@ mlrattle --help
 mlbatch --help
 mlrelax --help
 mlphonon --help
+mlddb --help
+mlhist --help
+mltraining --help
 ```
 
 For issues or questions, refer to the main project README.

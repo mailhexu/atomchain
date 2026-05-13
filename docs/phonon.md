@@ -26,12 +26,13 @@ mlphonon POSCAR --figname phonon_bands.pdf --npoints 200
 
 ### Options
 - `fname` - Input structure file (POSCAR, CIF, XYZ, etc.)
-- `--model, -m` - ML model: `chgnet` (default), `m3gnet`, `mace`, `deepmd`
+- `--model, -m` - Calculator name accepted by `init_calc()` (default: `chgnet`), such as `chgnet`, `m3gnet`, `matgl`, `mace`, `mace-r2scan`, `deepmd`, `multibinit`, or `mb`
+- `--model_path` - Optional model/config path for calculators that need one, such as `multibinit` or `deepmd`
 - `--relax, -r` - Relax structure before phonon calculation (default: False)
 - `--ndim, -n` - Supercell size (3 integers, default: `2 2 2`)
 - `--kpath, -k` - K-path string (e.g., `GXMG`). Auto-detected if not specified
 - `--npoints, -p` - Number of points in band structure (default: 100)
-- `--figname, -f` - Output figure file name (default: `phonon.pdf`)
+- `--figname, -f` - Output figure file name (CLI default: `phonon.png`)
 
 ## Python API
 
@@ -82,7 +83,8 @@ phonon_with_ml(
 - `knames` - K-path string or None for auto-detection (optional)
 - `kvectors` - Custom k-point vectors (optional)
 - `npoints` - Number of points in band structure (default: 100)
-- `figname` - Output figure file name (default: `'phonon.pdf'`)
+- `model_path` - Optional model/config path for calculators that need one
+- `figname` - Output figure file name (Python API default: `'phonon.pdf'`)
 - `**kwargs` - Additional parameters passed to `calculate_phonon()`:
   - `ndim` - Supercell matrix (default: `np.diag([2,2,2])`)
   - `distance` - Displacement distance in Å (default: 0.05)

@@ -1,10 +1,10 @@
 # MULTIBINIT Tutorial
 
-Complete guide for using MULTIBINIT effective potentials with AtomChain.
+Guide for using MULTIBINIT effective potentials through AtomChain's `init_calc()` wrapper around `pymultibinit`.
 
 ## Overview
 
-MULTIBINIT provides effective potentials trained from DFT that enable fast calculations while maintaining accuracy. Use it for:
+MULTIBINIT provides effective potentials trained from first-principles data. In AtomChain it is exposed as the `multibinit` or `mb` calculator name and can be used anywhere a normal ASE calculator is accepted, including:
 - Structure relaxation
 - Phonon calculations  
 - Molecular dynamics
@@ -12,17 +12,22 @@ MULTIBINIT provides effective potentials trained from DFT that enable fast calcu
 
 ## Setup
 
-### 1. Install PyMultibinit and atomchain
+### 1. Install pymultibinit and atomchain
 
 ```bash
-pip install pymultibinit
-pip install atomchain
+pip install pymultibinit atomchain
 ```
 
-### 2. Set Library Path
+For development in this repository, use `uv sync` from the repository root.
+
+### 2. Configure pymultibinit Runtime Requirements
+
+`atomchain` does not call MULTIBINIT directly. It imports `pymultibinit.calculator.MultibinitCalculator` and calls `MultibinitCalculator.from_config_file(model_path)`.
+
+Depending on the installed `pymultibinit` backend and model artifact, you may need an ABINIT shared library or a pure-Python XML model. If your backend requires `libabinit`, set the library path before running AtomChain:
 
 ```bash
-# Option A: LIBABINIT_PATH (recommended)
+# Option A: LIBABINIT_PATH
 export LIBABINIT_PATH=/path/to/abinit/build/src/98_main/libabinit.dylib  # macOS
 export LIBABINIT_PATH=/path/to/abinit/build/src/98_main/libabinit.so     # Linux
 
@@ -44,14 +49,14 @@ sys_file: BaHfO3.xml
 # Supercell size (MUST match your structure!)
 ncell: 2 2 2
 
-# Optional parameters
+# Optional parameters interpreted by pymultibinit
 ngqpt: 4 4 4      # Q-point grid
 dipdip: 1         # Dipole-dipole interactions
 auto_match_atoms: true
 match_tolerance: 0.1
 ```
 
-**Important**: `ncell` must match your input structure size. If `ncell: 2 2 2`, use a 2×2×2 supercell.
+**Important**: The config file format and supported keys are owned by `pymultibinit`. `ncell` must match your input structure size. If `ncell: 2 2 2`, use a 2x2x2 supercell.
 
 ## Usage
 
@@ -62,14 +67,14 @@ match_tolerance: 0.1
 mlrelax structure.cif \
   --model multibinit \
   --model_path multibinit.conf \
-  --output relaxed.cif
+  --output_file relaxed.cif
 
 # With options
 mlrelax structure.vasp \
   --model multibinit \
   --model_path multibinit.conf \
   --fmax 0.01 \
-  --output POSCAR_relaxed
+  --output_file POSCAR_relaxed
 ```
 
 ### Phonon Calculation
@@ -167,7 +172,7 @@ mlrelax supercell_222.cif \
   --model multibinit \
   --model_path multibinit.conf \
   --fmax 0.01 \
-  --output relaxed.cif
+  --output_file relaxed.cif
 ```
 
 ### 4. Calculate Phonons
@@ -274,7 +279,7 @@ atoms.write('reference_with_symbols.cif')
 
 ```bash
 # Error: "Could not find libabinit"
-# Solution: Set library path
+# Solution for libabinit-backed pymultibinit backends: set library path
 export LIBABINIT_PATH=/path/to/libabinit.dylib
 ```
 
@@ -336,9 +341,7 @@ lib_path: /path/to/lib        # Override library location
 
 ## Examples
 
-Complete examples available in:
+Examples currently available in:
 - `atomchain/examples/03_multibinit/BaHfO3/`
-  - `multibinit_relax.py`
-  - `multibinit_phonon.py`
   - `multibinit_md_nve.py`
   - `multibinit_md_nvt.py`

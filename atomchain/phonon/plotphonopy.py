@@ -84,7 +84,10 @@ def plot_phonon(
         units: Frequency units - "cm-1" (default) or "THz"
 
     Returns:
-        None
+        tuple: (phonon, fig, ax) where:
+            - phonon: Phonopy object with calculated force constants
+            - fig: matplotlib Figure object
+            - ax: matplotlib Axes object for the band structure plot
 
     Example:
         >>> # Automatic k-path detection
@@ -98,6 +101,11 @@ def plot_phonon(
 
         >>> # Use THz units
         >>> plot_phonon(path="phonon_save", units="THz")
+
+        >>> # Get phonopy object and matplotlib objects for manual customization
+        >>> phonon, fig, ax = plot_phonon(path="phonon_save", show=False)
+        >>> ax.set_ylim(-50, 500)  # Set custom y-range
+        >>> fig.savefig("phonon_custom.pdf")
     """
     # Load phonopy data
     phonopy_yaml = os.path.join(path, "phonopy_params.yaml")
@@ -267,7 +275,7 @@ def plot_phonon(
     if show:
         plt.show()
 
-    plt.close()
+    return phonon, fig, ax
 
 
 if __name__ == "__main__":

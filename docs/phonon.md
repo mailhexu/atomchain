@@ -97,6 +97,43 @@ phonon_with_ml(
 - Band structure plot saved to specified figure file
 - Displays plot automatically if `plot=True`
 
+## Band Structure Plot Customization
+
+The `plot_phonon()` function returns the phonopy object and matplotlib figure/axes, allowing manual customization of the band structure plot.
+
+```python
+from atomchain.phonon.plotphonopy import plot_phonon
+
+# Get phonopy object and matplotlib handles for manual customization
+phonon, fig, ax = plot_phonon(
+    path="phonon_save",
+    kpath="GXMG",
+    show=False,          # Don't display interactively
+    figname="phonon.pdf" # Auto-saved before returning
+)
+
+# Customize the plot using standard matplotlib API
+ax.set_ylim(-50, 500)   # Change y-range to focus on a frequency window
+fig.savefig("phonon_custom.pdf", dpi=300, bbox_inches="tight")
+
+# The phonon object can be used for further analysis
+print(phonon.primitive)
+```
+
+### Parameters (plot_phonon)
+- `path` - Directory containing `phonopy_params.yaml` (default: `"./"`)
+- `kpath` - K-path string (e.g., `"GXMG"`). Auto-detected if `None`
+- `npoints` - Number of points along the k-path (default: 100)
+- `color` - Line color for bands (default: `"blue"`)
+- `figname` - Output filename, or `None` to skip saving (default: `"phonon.pdf"`)
+- `show` - Display the plot interactively (default: `True`)
+- `units` - Frequency units: `"cm-1"` (default) or `"THz"`
+
+### Returns (plot_phonon)
+- `phonon` - Phonopy object with calculated force constants
+- `fig` - matplotlib `Figure` object
+- `ax` - matplotlib `Axes` object for the band structure subplot
+
 ## Workflow
 
 The phonon calculation follows these steps:

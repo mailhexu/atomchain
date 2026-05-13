@@ -189,7 +189,7 @@ def calculate_single_point(
     atoms.calc = calculator
 
     # Perform calculations
-    energy = atoms.get_potential_energy()
+    energy = float(atoms.get_potential_energy())
     forces = atoms.get_forces()
     stress = atoms.get_stress(voigt=True)
 

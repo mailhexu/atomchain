@@ -27,7 +27,7 @@ def relax_with_ml(
     traj_file="relax.traj",
     model_path=None,
     fmax=0.001,
-    cell_factor=1000,
+    cell_factor=50,
     rattle=None,
     fix_atoms=None,
     **ucf_kwargs,

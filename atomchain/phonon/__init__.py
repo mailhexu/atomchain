@@ -6,7 +6,12 @@ potentials and the frozen phonon method.
 """
 
 from atomchain.phonon.frozenphonon import calculate_phonon, compute_phonon_at_qpoints
-from atomchain.phonon.mlphonon import phonon_with_ml, mlphonon_cli
+from atomchain.phonon.irreps import (
+    get_all_labeled_modes,
+    get_imaginary_modes,
+    label_phonon_modes,
+)
+from atomchain.phonon.mlphonon import mlphonon_cli, phonon_with_ml
 from atomchain.phonon.plotphonopy import plot_phonon
 
 __all__ = [
@@ -15,4 +20,7 @@ __all__ = [
     "phonon_with_ml",
     "mlphonon_cli",
     "plot_phonon",
+    "label_phonon_modes",
+    "get_all_labeled_modes",
+    "get_imaginary_modes",
 ]

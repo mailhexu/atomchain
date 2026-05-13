@@ -15,6 +15,9 @@ AtomChain includes several command-line tools for common atomistic workflows:
 - **`mlbatch`** - Batch process trajectories with ML potentials
 - **`mlcompare`** - Compare calculated properties between two trajectories
 - **`mlneb`** - Nudged elastic band calculations for reaction pathways
+- **`mlddb`** - Write ABINIT-style DDB files from phonopy and ML finite-difference workflows
+- **`mlhist`** - Convert between ABINIT HIST.nc and ASE trajectory files
+- **`mltraining`** - Generate MULTIBINIT training trajectories/artifacts and delegate training to pymultibinit
 
 ## Installation
 
@@ -59,6 +62,21 @@ mlrelax input.vasp --calculator chgnet --output relaxed.vasp
 mlphonon input.vasp --calculator chgnet --supercell 2,2,2
 ```
 
+### Write DDB From Phonopy
+```bash
+mlddb BaTiO3.vasp --phonopy-yaml phonon_save/phonopy_params.yaml --output BaTiO3.ddb --validate
+```
+
+### Write ABINIT HIST From Trajectory
+```bash
+mlhist training.traj training_HIST.nc --to hist
+```
+
+### Generate Training Trajectory
+```bash
+mltraining generate BaTiO3.vasp --sources md phonon_modes --model mace-r2scan --output training.traj
+```
+
 ## Documentation
 
 Detailed documentation for each tool is available in the `docs/` directory:
@@ -70,6 +88,8 @@ Detailed documentation for each tool is available in the `docs/` directory:
 - [docs/compare.md](docs/compare.md) - Trajectory comparison
 - [docs/relax.md](docs/relax.md) - Structure relaxation
 - [docs/phonon.md](docs/phonon.md) - Phonon calculations
+- [docs/ddb.md](docs/ddb.md) - ABINIT-style DDB writer
+- [docs/hist_training.md](docs/hist_training.md) - ABINIT HIST and MULTIBINIT training artifacts
 
 ## Python API
 
@@ -88,6 +108,9 @@ from atomchain import (
     compare_trajectories,
     calculate_neb,
     predict_gap,
+    read_abinit_hist,
+    write_abinit_hist,
+    generate_training_trajectory,
 )
 
 atoms = read("structure.vasp")
@@ -128,6 +151,11 @@ compare_trajectories("dft.traj", "ml.traj", labels=["DFT", "CHGNet"])
 # NEB calculation
 images = [read(f"image{i}.vasp") for i in range(5)]
 calculate_neb(images, calculator="chgnet")
+
+# HIST conversion and training trajectory generation
+frames = generate_training_trajectory(atoms, sources=["phonon_modes"], evaluate=False)
+write_abinit_hist(frames, "training_HIST.nc", strict=False)
+loaded_frames = read_abinit_hist("training_HIST.nc")
 ```
 
 ## Requirements

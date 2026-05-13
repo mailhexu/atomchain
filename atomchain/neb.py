@@ -10,12 +10,13 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple, Union
+from typing import Dict, List, Optional, Union
 
 import matplotlib.pyplot as plt
 import numpy as np
 from ase import Atoms
 from ase.io import read, write
+
 try:
     from ase.mep import NEB
 except ImportError:
@@ -77,7 +78,7 @@ def _interpolate_path(
 
     # Use IDPP for better interpolation with minimum image convention
     neb_idpp = NEB(images)
-    neb_idpp.interpolate(method='idpp', mic=True)
+    neb_idpp.interpolate(method="idpp", mic=True)
 
     return images
 
@@ -97,9 +98,9 @@ def _calculate_barriers(energies: np.ndarray) -> Dict[str, float]:
             - 'ts_energy': Energy of transition state (eV)
             - 'reaction_energy': Energy difference final - initial (eV)
     """
-    e_initial = energies[0]
-    e_final = energies[-1]
-    e_max = np.max(energies)
+    e_initial = float(energies[0])
+    e_final = float(energies[-1])
+    e_max = float(np.max(energies))
     ts_index = int(np.argmax(energies))
 
     barrier_forward = e_max - e_initial
@@ -139,45 +140,67 @@ def _create_energy_profile_plot(
     x = np.linspace(0, 1, len(energies))
 
     # Plot energy profile
-    ax.plot(x, energies, 'o-', linewidth=2, markersize=8, label='NEB Path')
+    ax.plot(x, energies, "o-", linewidth=2, markersize=8, label="NEB Path")
 
     # Mark transition state
-    ts_idx = int(barriers['ts_index'])
-    ax.plot(x[ts_idx], energies[ts_idx], 'r*', markersize=20,
-            label=f"TS (Image {ts_idx})", zorder=5)
+    ts_idx = int(barriers["ts_index"])
+    ax.plot(
+        x[ts_idx],
+        energies[ts_idx],
+        "r*",
+        markersize=20,
+        label=f"TS (Image {ts_idx})",
+        zorder=5,
+    )
 
     # Mark initial and final states
-    ax.plot(x[0], energies[0], 'go', markersize=12, label='Initial', zorder=5)
-    ax.plot(x[-1], energies[-1], 'bo', markersize=12, label='Final', zorder=5)
+    ax.plot(x[0], energies[0], "go", markersize=12, label="Initial", zorder=5)
+    ax.plot(x[-1], energies[-1], "bo", markersize=12, label="Final", zorder=5)
 
     # Add barrier annotations
-    barrier_fwd = barriers['barrier_forward']
-    barrier_rev = barriers['barrier_reverse']
-    reaction_e = barriers['reaction_energy']
+    barrier_fwd = barriers["barrier_forward"]
+    barrier_rev = barriers["barrier_reverse"]
+    reaction_e = barriers["reaction_energy"]
 
     # Forward barrier arrow
-    ax.annotate('', xy=(x[ts_idx], energies[ts_idx]),
-                xytext=(x[0], energies[0]),
-                arrowprops=dict(arrowstyle='<->', color='green', lw=2))
-    ax.text(x[ts_idx] / 2, (energies[0] + energies[ts_idx]) / 2,
-            f'E$_a^{{fwd}}$ = {barrier_fwd:.3f} eV',
-            fontsize=11, color='green', ha='center',
-            bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
+    ax.annotate(
+        "",
+        xy=(x[ts_idx], energies[ts_idx]),
+        xytext=(x[0], energies[0]),
+        arrowprops=dict(arrowstyle="<->", color="green", lw=2),
+    )
+    ax.text(
+        x[ts_idx] / 2,
+        (energies[0] + energies[ts_idx]) / 2,
+        f"E$_a^{{fwd}}$ = {barrier_fwd:.3f} eV",
+        fontsize=11,
+        color="green",
+        ha="center",
+        bbox=dict(boxstyle="round", facecolor="white", alpha=0.8),
+    )
 
     # Reverse barrier arrow
-    ax.annotate('', xy=(x[ts_idx], energies[ts_idx]),
-                xytext=(x[-1], energies[-1]),
-                arrowprops=dict(arrowstyle='<->', color='blue', lw=2))
-    ax.text((x[ts_idx] + x[-1]) / 2, (energies[-1] + energies[ts_idx]) / 2,
-            f'E$_a^{{rev}}$ = {barrier_rev:.3f} eV',
-            fontsize=11, color='blue', ha='center',
-            bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
+    ax.annotate(
+        "",
+        xy=(x[ts_idx], energies[ts_idx]),
+        xytext=(x[-1], energies[-1]),
+        arrowprops=dict(arrowstyle="<->", color="blue", lw=2),
+    )
+    ax.text(
+        (x[ts_idx] + x[-1]) / 2,
+        (energies[-1] + energies[ts_idx]) / 2,
+        f"E$_a^{{rev}}$ = {barrier_rev:.3f} eV",
+        fontsize=11,
+        color="blue",
+        ha="center",
+        bbox=dict(boxstyle="round", facecolor="white", alpha=0.8),
+    )
 
     # Labels and formatting
-    ax.set_xlabel('Reaction Coordinate', fontsize=12)
-    ax.set_ylabel('Energy (eV)', fontsize=12)
-    ax.set_title('NEB Energy Profile', fontsize=14, fontweight='bold')
-    ax.legend(fontsize=10, loc='best')
+    ax.set_xlabel("Reaction Coordinate", fontsize=12)
+    ax.set_ylabel("Energy (eV)", fontsize=12)
+    ax.set_title("NEB Energy Profile", fontsize=14, fontweight="bold")
+    ax.legend(fontsize=10, loc="best")
     ax.grid(True, alpha=0.3)
 
     # Add info text box
@@ -187,18 +210,22 @@ def _create_energy_profile_plot(
         f"Reverse Barrier: {barrier_rev:.3f} eV\n"
         f"Reaction Energy: {reaction_e:.3f} eV"
     )
-    ax.text(0.02, 0.98, info_text,
-            transform=ax.transAxes,
-            fontsize=10,
-            verticalalignment='top',
-            bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.9))
+    ax.text(
+        0.02,
+        0.98,
+        info_text,
+        transform=ax.transAxes,
+        fontsize=10,
+        verticalalignment="top",
+        bbox=dict(boxstyle="round", facecolor="wheat", alpha=0.9),
+    )
 
     plt.tight_layout()
 
     # Save to file
     if output:
         output_path = Path(output)
-        fig.savefig(output_path, dpi=300, bbox_inches='tight')
+        fig.savefig(output_path, dpi=300, bbox_inches="tight")
         print(f"[NEB] Saved energy profile plot to {output}")
 
     # Show interactively
@@ -211,10 +238,10 @@ def _create_energy_profile_plot(
 def calculate_neb(
     initial: Union[Atoms, str, Path],
     final: Union[Atoms, str, Path],
-    calculator: Union[str, object] = 'chgnet',
+    calculator: Union[str, object] = "chgnet",
     nimages: int = 7,
     fmax: float = 0.05,
-    optimizer: str = 'FIRE',
+    optimizer: str = "FIRE",
     max_steps: int = 500,
     output: Optional[Union[str, Path]] = None,
     plot: Optional[Union[str, Path]] = None,
@@ -291,7 +318,7 @@ def calculate_neb(
     # Load structures if file paths provided
     initial_atoms: Atoms
     final_atoms: Atoms
-    
+
     if isinstance(initial, (str, Path)):
         if not Path(initial).exists():
             raise FileNotFoundError(f"Initial structure file not found: {initial}")
@@ -333,10 +360,14 @@ def calculate_neb(
 
     # Break symmetry if requested (helps with symmetric barriers)
     if break_symmetry > 0:
-        print_fn(f"[NEB] Breaking symmetry with random displacements (±{break_symmetry:.3f} Å)...")
+        print_fn(
+            f"[NEB] Breaking symmetry with random displacements (±{break_symmetry:.3f} Å)..."
+        )
         for i, img in enumerate(images[1:-1], start=1):  # Don't perturb endpoints
             # Add small random displacements to intermediate images
-            displacements = np.random.uniform(-break_symmetry, break_symmetry, img.positions.shape)
+            displacements = np.random.uniform(
+                -break_symmetry, break_symmetry, img.positions.shape
+            )
             img.positions += displacements
 
     # Attach calculator to all images (including endpoints for energy extraction)
@@ -349,9 +380,9 @@ def calculate_neb(
 
     # Select optimizer
     optimizer_map = {
-        'FIRE': FIRE,
-        'BFGS': BFGS,
-        'LBFGS': LBFGS,
+        "FIRE": FIRE,
+        "BFGS": BFGS,
+        "LBFGS": LBFGS,
     }
 
     if optimizer.upper() not in optimizer_map:
@@ -361,14 +392,18 @@ def calculate_neb(
         )
 
     opt_class = optimizer_map[optimizer.upper()]
-    print_fn(f"[NEB] Optimizing with {optimizer} (fmax={fmax}, max_steps={max_steps})...")
+    print_fn(
+        f"[NEB] Optimizing with {optimizer} (fmax={fmax}, max_steps={max_steps})..."
+    )
 
     # Run optimization
     opt = opt_class(neb)
     converged = opt.run(fmax=fmax, steps=max_steps)
 
     if converged:
-        print_fn(f"[NEB] Optimization converged after {opt.get_number_of_steps()} steps")
+        print_fn(
+            f"[NEB] Optimization converged after {opt.get_number_of_steps()} steps"
+        )
     else:
         print_fn(f"[NEB] Warning: Optimization did not converge in {max_steps} steps")
 
@@ -388,11 +423,12 @@ def calculate_neb(
         print_fn(f"[NEB] Saving converged path to {output}...")
         # Attach energies as SinglePointCalculator to preserve them
         from ase.calculators.singlepoint import SinglePointCalculator
+
         for i, (img, energy) in enumerate(zip(images, energies)):
             # Get forces from the image if available
             try:
                 forces = img.get_forces()
-            except:
+            except Exception:
                 forces = None
             img.calc = SinglePointCalculator(img, energy=energy, forces=forces)
         write(str(output), images)
@@ -404,14 +440,14 @@ def calculate_neb(
 
     # Return results
     return {
-        'images': images,
-        'energies': energies,
-        'barrier_forward': barriers['barrier_forward'],
-        'barrier_reverse': barriers['barrier_reverse'],
-        'ts_index': barriers['ts_index'],
-        'ts_energy': barriers['ts_energy'],
-        'reaction_energy': barriers['reaction_energy'],
-        'converged': converged,
+        "images": images,
+        "energies": energies,
+        "barrier_forward": barriers["barrier_forward"],
+        "barrier_reverse": barriers["barrier_reverse"],
+        "ts_index": barriers["ts_index"],
+        "ts_energy": barriers["ts_energy"],
+        "reaction_energy": barriers["reaction_energy"],
+        "converged": bool(converged),
     }
 
 
@@ -511,7 +547,7 @@ Examples:
         default=0.0,
         metavar="DISPLACEMENT",
         help="Break symmetry with random displacements (Å). "
-             "Useful for symmetric barriers. Default: 0.0 (disabled)",
+        "Useful for symmetric barriers. Default: 0.0 (disabled)",
     )
 
     args = parser.parse_args()

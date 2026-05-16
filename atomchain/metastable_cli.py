@@ -130,6 +130,7 @@ def mlmetastable_cli():
         nmax=args.nmax,
         amplitude=args.amplitude,
         max_cell_size=args.max_cell_size,
+        output_dir=args.output_dir,
         phonon_ndim=args.phonon_ndim,
         relax_kwargs={"fmax": args.fmax},
         compute_phonons=args.compute_phonons,
@@ -144,11 +145,12 @@ def mlmetastable_cli():
             "phonon_dir": None,
         }
 
+    parent_atoms = exploration_data.get("parent_atoms", atoms)
     report = generate_report(
-        exploration_data, atoms, args.model, params, args.output_dir
+        exploration_data, parent_atoms, args.model, params, args.output_dir
     )
 
-    print_summary(report, atoms)
+    print_summary(report, parent_atoms)
 
 
 if __name__ == "__main__":

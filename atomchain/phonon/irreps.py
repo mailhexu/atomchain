@@ -86,16 +86,37 @@ def get_all_labeled_modes(
     return result
 
 
+def _is_gamma_label(label):
+    return label in {"GM", "G", "Gamma", "Γ"}
+
+
+def _gamma_acoustic_band_indices(modes):
+    """Return the three Gamma bands closest to zero frequency."""
+    indexed_modes = [(abs(mode["frequency"]), mode["band_index"]) for mode in modes]
+    indexed_modes.sort(key=lambda item: item[0])
+    return {band_index for _, band_index in indexed_modes[:3]}
+
+
 def get_imaginary_modes(all_labeled_modes, threshold=0.0, deg_tolerance=1e-3):
     imaginary = []
 
     for kpoint_label, data in all_labeled_modes.items():
         modes = data["modes"]
+        acoustic_band_indices = (
+            _gamma_acoustic_band_indices(modes)
+            if _is_gamma_label(kpoint_label)
+            else set()
+        )
         for mode in modes:
+            if mode["band_index"] in acoustic_band_indices:
+                continue
             freq = mode["frequency"]
             if freq < threshold:
                 degeneracy = sum(
-                    1 for m in modes if abs(m["frequency"] - freq) < deg_tolerance
+                    1
+                    for m in modes
+                    if m["band_index"] not in acoustic_band_indices
+                    and abs(m["frequency"] - freq) < deg_tolerance
                 )
                 imaginary.append(
                     {

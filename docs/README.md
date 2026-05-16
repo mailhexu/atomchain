@@ -2,6 +2,36 @@
 
 Complete documentation for AtomChain CLI tools and Python APIs.
 
+## Installation
+
+AtomChain requires Python 3.10 or newer.
+
+For development from the repository root:
+
+```bash
+uv sync
+```
+
+For editable installation with `pip`:
+
+```bash
+pip install -e .
+```
+
+MACE support is optional. Install it with:
+
+```bash
+pip install -e '.[mace]'
+```
+
+or:
+
+```bash
+uv sync --extra mace
+```
+
+For `mace-r2scan`, AtomChain automatically downloads the MACE-MH-1 model to `~/.config/mace/mace-mh-1.model` when it is missing. If automatic download fails, manually download `https://huggingface.co/mace-foundations/mace-mh-1/resolve/main/mace-mh-1.model` and save it at that path.
+
 ## Quick Links
 
 - **[MULTIBINIT Tutorial](multibinit.md)** - MULTIBINIT calculator use through `pymultibinit`
@@ -49,6 +79,7 @@ AtomChain provides command-line tools for common atomistic modeling workflows:
 - **[singlepoint.md](singlepoint.md)** - Energy/forces/stress calculations
 - **[relax.md](relax.md)** - Structure optimization
 - **[phonon.md](phonon.md)** - Phonon band structures
+- **[metastable.md](metastable.md)** - Metastable state exploration from imaginary phonon modes
 - **[md.md](md.md)** - Molecular dynamics (NVE, NVT, NPT)
 - **[batch.md](batch.md)** - Batch process trajectories
 - **[compare.md](compare.md)** - Compare trajectories with energy/force/stress metrics
@@ -136,10 +167,10 @@ Supported ML potential calculators:
 
 ## Requirements
 
-- Python 3.8+
+- Python 3.10+
 - ASE (Atomic Simulation Environment)
-- Phonopy
-- Optional calculator packages depending on the selected model: CHGNet, M3GNet/matgl, MACE, DeePMD-kit, pymultibinit, atomic_potential_xq
+- Phonopy 3.0.0
+- Optional calculator packages depending on the selected model: CHGNet, M3GNet/matgl, MACE (`.[mace]`), DeePMD-kit, pymultibinit, atomic_potential_xq
 
 ## Getting Help
 

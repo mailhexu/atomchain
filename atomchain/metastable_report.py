@@ -13,6 +13,7 @@ Public API:
 from __future__ import annotations
 
 import os
+import re
 import shutil
 
 import matplotlib
@@ -23,6 +24,172 @@ import numpy as np
 import spglib
 import yaml
 from ase.io import write
+
+
+def _assign_groups_for_report(results):
+    """Ensure report entries have relaxed-structure grouping metadata."""
+    groups = {}
+    next_group_id = 1
+    for result in results:
+        group_id = result.get("relaxed_group_id")
+        if group_id is None:
+            key = (
+                result.get("spacegroup_number"),
+                round(float(result.get("energy_per_fu", 0.0)), 3)
+                if result.get("energy_per_fu") is not None
+                else result.get("id"),
+                result.get("n_atoms"),
+            )
+            if key not in groups:
+                groups[key] = next_group_id
+                next_group_id += 1
+            result["relaxed_group_id"] = groups[key]
+
+    members = {}
+    for result in results:
+        members.setdefault(result.get("relaxed_group_id"), []).append(result.get("id"))
+
+    for result in results:
+        group_members = members.get(result.get("relaxed_group_id"), [result.get("id")])
+        result.setdefault("relaxed_group_members", group_members)
+        result.setdefault("relaxed_group_size", len(group_members))
+        result.setdefault(
+            "relaxed_group_representative", result.get("id") == group_members[0]
+        )
+    return results
+
+
+def _write_structure_directory_readmes(output_dir, report):
+    """Write README files for report-linked initial and relaxed structures."""
+    for dirname, title, file_key in [
+        (
+            "initial_structures",
+            "Initial Distorted Structures",
+            "initial_structure_file",
+        ),
+        ("relaxed_structures", "Relaxed Structures", "relaxed_structure_file"),
+    ]:
+        dirpath = os.path.join(output_dir, dirname)
+        os.makedirs(dirpath, exist_ok=True)
+        lines = [
+            f"# {title}",
+            "",
+            "Files in this directory map to rows in `../report.yaml` and `../report.md`.",
+            "",
+            "| Result ID | File | Label | Relaxed Group | Source Modes | Supercell |",
+            "|---|---|---|---|---|---|",
+        ]
+        for result in report.get("results", []):
+            filename = result.get(file_key)
+            if not filename:
+                continue
+            source_modes = ", ".join(
+                f"{m.get('bcs_label') or m.get('kpoint_label')}:{m.get('band_index')}"
+                for m in result.get("source_modes", [])
+            )
+            group = result.get("relaxed_group_id", "")
+            if result.get("relaxed_group_size", 1) > 1:
+                group = f"{group} ({result.get('relaxed_group_size')} equivalent)"
+            lines.append(
+                "| {id} | {file} | {label} | {group} | {modes} | {supercell} |".format(
+                    id=result.get("id"),
+                    file=os.path.basename(filename),
+                    label=result.get("combined_label", ""),
+                    group=group,
+                    modes=source_modes,
+                    supercell=result.get("supercell_matrix"),
+                )
+            )
+        lines.append("")
+        with open(os.path.join(dirpath, "README.md"), "w", encoding="utf-8") as handle:
+            handle.write("\n".join(lines))
+
+
+def _serialize_kpoints(kpoints):
+    entries = []
+    seen_qpoints = set()
+    for item in kpoints or []:
+        if isinstance(item, dict):
+            label = item.get("label")
+            qpoint = item.get("qpoint")
+        else:
+            label = getattr(item, "label", None)
+            qpoint = getattr(item, "qpoint", None)
+        qpoint_values = (
+            [float(x) for x in np.asarray(qpoint, dtype=float).flat]
+            if qpoint is not None
+            else None
+        )
+        qpoint_key = (
+            tuple(round(x, 8) for x in qpoint_values) if qpoint_values else None
+        )
+        if qpoint_key is not None and qpoint_key in seen_qpoints:
+            continue
+        if qpoint_key is not None:
+            seen_qpoints.add(qpoint_key)
+        entries.append(
+            {
+                "label": str(label),
+                "qpoint": qpoint_values,
+            }
+        )
+    return entries
+
+
+def _serialize_labeled_modes(all_labeled_modes):
+    serialized = []
+    for label, data in sorted((all_labeled_modes or {}).items()):
+        modes = []
+        for mode in data.get("modes", []):
+            modes.append(
+                {
+                    "band_index": int(mode["band_index"])
+                    if mode.get("band_index") is not None
+                    else None,
+                    "frequency_THz": round(float(mode["frequency"]), 4)
+                    if mode.get("frequency") is not None
+                    else None,
+                    "bcs_label": mode.get("bcs_label"),
+                    "mulliken_label": mode.get("mulliken_label"),
+                }
+            )
+        frequencies = data.get("frequencies")
+        serialized.append(
+            {
+                "label": str(label),
+                "frequencies_THz": [
+                    round(float(x), 4) for x in np.asarray(frequencies).flat
+                ]
+                if frequencies is not None
+                else [mode["frequency_THz"] for mode in modes],
+                "modes": modes,
+            }
+        )
+    return serialized
+
+
+def _mode_labels(mode):
+    labels = [mode.get("bcs_label"), mode.get("mulliken_label")]
+    return [label for label in labels if label]
+
+
+def _mode_index_summary(modes):
+    parts = []
+    for mode in modes:
+        kpoint_label = mode.get("kpoint_label") or "?"
+        band_index = mode.get("band_index")
+        parts.append(
+            kpoint_label if band_index is None else f"{kpoint_label}:{band_index}"
+        )
+    return ", ".join(parts)
+
+
+def _mode_label_summary(modes):
+    parts = []
+    for mode in modes:
+        labels = _mode_labels(mode)
+        parts.append("/".join(labels) if labels else mode.get("kpoint_label") or "?")
+    return ", ".join(parts)
 
 
 def _get_spacegroup_info(atoms, symprec=0.1):
@@ -38,7 +205,12 @@ def _get_spacegroup_info(atoms, symprec=0.1):
     return spg_dict.international, spg_dict.number
 
 
-def _plot_phonon_band_structure(phonon_dir, output_dir):
+def _safe_filename_stem(value):
+    stem = re.sub(r"[^A-Za-z0-9_.-]+", "_", str(value)).strip("._")
+    return stem or "structure"
+
+
+def _plot_phonon_band_structure(phonon_dir, output_dir, formula=None):
     """Plot the parent phonon band structure and copy PNG to output_dir.
 
     Returns the PNG filename or None on failure.
@@ -52,7 +224,8 @@ def _plot_phonon_band_structure(phonon_dir, output_dir):
     if not os.path.exists(phonon_yaml):
         return None
 
-    figname = "phonon_band_structure.png"
+    prefix = _safe_filename_stem(formula) if formula else "parent"
+    figname = f"{prefix}_phonon_band_structure.png"
     try:
         plot_phonon(path=phonon_dir, figname=figname, show=False, units="THz")
         src = os.path.join(phonon_dir, figname)
@@ -65,7 +238,7 @@ def _plot_phonon_band_structure(phonon_dir, output_dir):
         return None
 
 
-def _plot_metastable_phonon(result_id, phonon_dir, output_dir):
+def _plot_metastable_phonon(result_id, phonon_dir, output_dir, formula=None):
     """Plot phonon bands for a single metastable structure.
 
     Returns the PNG filename (e.g. ``metastable_001_phonon.png``) or None.
@@ -74,7 +247,8 @@ def _plot_metastable_phonon(result_id, phonon_dir, output_dir):
     if not os.path.exists(phonon_yaml):
         return None
 
-    figname = f"metastable_{result_id:03d}_phonon.png"
+    prefix = _safe_filename_stem(formula) if formula else "metastable"
+    figname = f"{prefix}_metastable_{result_id:03d}_phonon.png"
     try:
         from atomchain.phonon.plotphonopy import plot_phonon
 
@@ -91,7 +265,7 @@ def _plot_metastable_phonon(result_id, phonon_dir, output_dir):
 
 def _plot_energy_bar_chart(report, output_dir):
     """Generate a horizontal bar chart of ΔE/FU for all metastable structures."""
-    results = report["results"]
+    results = [r for r in report["results"] if r.get("delta_e_per_fu") is not None]
     if not results:
         return None
 
@@ -115,7 +289,8 @@ def _plot_energy_bar_chart(report, output_dir):
     )
     plt.tight_layout()
 
-    figname = "energy_bar_chart.png"
+    formula = report.get("parent_structure", {}).get("formula", "structure")
+    figname = f"{_safe_filename_stem(formula)}_energy_bar_chart.png"
     figpath = os.path.join(output_dir, figname)
     fig.savefig(figpath, dpi=150, bbox_inches="tight")
     plt.close(fig)
@@ -145,10 +320,18 @@ def _build_report_dict(exploration_data, parent_atoms, calc_name, params, output
         results = exploration_data.get("results", [])
         imaginary_modes = exploration_data.get("imaginary_modes", [])
         phonon_dir = exploration_data.get("phonon_dir")
+        ase_kpoints = exploration_data.get("ase_kpoints", [])
+        bcs_kpoints = exploration_data.get("bcs_kpoints", [])
+        bcs_labeled_modes = exploration_data.get("bcs_labeled_modes", {})
     else:
         results = exploration_data
         imaginary_modes = []
         phonon_dir = None
+        ase_kpoints = []
+        bcs_kpoints = []
+        bcs_labeled_modes = {}
+
+    results = _assign_groups_for_report(list(results))
 
     parent_sg_name, parent_sg_number = _get_spacegroup_info(parent_atoms)
 
@@ -168,18 +351,26 @@ def _build_report_dict(exploration_data, parent_atoms, calc_name, params, output
             "spacegroup_number": parent_sg_number,
         },
         "imaginary_modes": [],
+        "ase_kpoints": _serialize_kpoints(ase_kpoints),
+        "bcs_kpoints": _serialize_kpoints(bcs_kpoints),
+        "bcs_labeled_modes": _serialize_labeled_modes(bcs_labeled_modes),
         "results": [],
     }
 
     for m in imaginary_modes:
+        kpoint = m.get("kpoint")
+        if kpoint is not None:
+            kpoint = [float(x) for x in np.asarray(kpoint).flat]
         report["imaginary_modes"].append(
             {
                 "kpoint_label": m.get("kpoint_label", ""),
+                "kpoint": kpoint,
                 "band_index": m.get("band_index"),
                 "frequency_THz": round(float(m["frequency"]), 4)
                 if m.get("frequency") is not None
                 else None,
                 "bcs_label": m.get("bcs_label"),
+                "mulliken_label": m.get("mulliken_label"),
                 "degeneracy": m.get("degeneracy"),
             }
         )
@@ -220,14 +411,43 @@ def _build_report_dict(exploration_data, parent_atoms, calc_name, params, output
             }
             if "bcs_label" in m:
                 mode_entry["bcs_label"] = m["bcs_label"]
+            if "mulliken_label" in m:
+                mode_entry["mulliken_label"] = m["mulliken_label"]
             modes_for_report.append(mode_entry)
 
         sm = r.get("supercell_matrix")
         if sm is not None:
             sm = [[float(x) for x in row] for row in np.asarray(sm).reshape(3, 3)]
 
+        status = r.get("status", "success")
+        legacy_structure_file = r.get("structure_file")
+        if legacy_structure_file and os.path.dirname(legacy_structure_file):
+            relaxed_structure_file = legacy_structure_file
+        elif (
+            status != "success"
+            and r.get("atoms") is None
+            and r.get("relaxed_structure_file") is None
+        ):
+            relaxed_structure_file = None
+        else:
+            relaxed_structure_file = r.get(
+                "relaxed_structure_file",
+                os.path.join("relaxed_structures", f"relaxed_{r['id']:03d}.vasp"),
+            )
+
         entry = {
             "id": int(r["id"]),
+            "status": status,
+            "error_stage": r.get("error_stage"),
+            "error_message": r.get("error_message"),
+            "attempt": r.get("attempt"),
+            "amplitude": float(r["amplitude"])
+            if r.get("amplitude") is not None
+            else None,
+            "pre_relax_max_force": float(r["pre_relax_max_force"])
+            if r.get("pre_relax_max_force") is not None
+            else None,
+            "force_screen_reductions": r.get("force_screen_reductions"),
             "delta_e_per_fu": float(r["delta_e_per_fu"])
             if r.get("delta_e_per_fu") is not None
             else None,
@@ -239,28 +459,56 @@ def _build_report_dict(exploration_data, parent_atoms, calc_name, params, output
                 r.get("n_atoms", len(atoms_obj) if atoms_obj is not None else 0)
             ),
             "combined_label": r.get("combined_label", ""),
+            "mode_indices": _mode_index_summary(modes_for_report),
+            "mode_labels": _mode_label_summary(modes_for_report),
             "opd_label": r.get("opd_label"),
             "opd_is_maximal": r.get("opd_is_maximal"),
             "source_modes": modes_for_report,
             "supercell_matrix": sm,
-            "structure_file": r.get("structure_file", f"metastable_{r['id']:03d}.vasp"),
+            "initial_structure_file": r.get(
+                "initial_structure_file",
+                os.path.join("initial_structures", f"initial_{r['id']:03d}.vasp"),
+            ),
+            "relaxed_structure_file": relaxed_structure_file,
+            "structure_file": relaxed_structure_file,
+            "relaxed_group_id": r.get("relaxed_group_id"),
+            "relaxed_group_size": r.get("relaxed_group_size"),
+            "relaxed_group_members": r.get("relaxed_group_members"),
+            "relaxed_group_representative": r.get("relaxed_group_representative"),
             "phonon_band_structure": None,
         }
 
         phonon_yaml = r.get("phonon_yaml")
         if phonon_yaml and os.path.exists(phonon_yaml):
             phonon_subdir = os.path.dirname(phonon_yaml)
-            fig = _plot_metastable_phonon(entry["id"], phonon_subdir, output_dir)
+            fig = _plot_metastable_phonon(
+                entry["id"],
+                phonon_subdir,
+                output_dir,
+                report["parent_structure"]["formula"],
+            )
             entry["phonon_band_structure"] = fig
 
         report["results"].append(entry)
 
-        fname = entry["structure_file"]
+        initial_atoms = r.get("initial_atoms")
+        if initial_atoms is not None:
+            initial_path = os.path.join(output_dir, entry["initial_structure_file"])
+            os.makedirs(os.path.dirname(initial_path), exist_ok=True)
+            write(initial_path, initial_atoms, format="vasp")
+
+        fname = entry["relaxed_structure_file"]
         if atoms_obj is not None:
-            write(os.path.join(output_dir, fname), atoms_obj, format="vasp")
+            relaxed_path = os.path.join(output_dir, fname)
+            relaxed_dir = os.path.dirname(relaxed_path)
+            if relaxed_dir:
+                os.makedirs(relaxed_dir, exist_ok=True)
+            write(relaxed_path, atoms_obj, format="vasp")
 
     if phonon_dir:
-        band_fig = _plot_phonon_band_structure(phonon_dir, output_dir)
+        band_fig = _plot_phonon_band_structure(
+            phonon_dir, output_dir, report["parent_structure"]["formula"]
+        )
         if band_fig:
             report["phonon_band_structure"] = band_fig
 
@@ -268,7 +516,44 @@ def _build_report_dict(exploration_data, parent_atoms, calc_name, params, output
     if bar_fig:
         report["energy_bar_chart"] = bar_fig
 
+    report["relaxed_structure_groups"] = _build_group_summary(report["results"])
+    _write_structure_directory_readmes(output_dir, report)
+
     return report
+
+
+def _build_group_summary(results):
+    groups = {}
+    for result in results:
+        group_id = result.get("relaxed_group_id")
+        if group_id is None:
+            continue
+        group = groups.setdefault(
+            group_id,
+            {
+                "group_id": group_id,
+                "representative_id": result.get("id"),
+                "member_ids": [],
+                "spacegroup": result.get("relaxed_spacegroup"),
+                "best_delta_e_per_fu": result.get("delta_e_per_fu"),
+            },
+        )
+        group["member_ids"].append(result.get("id"))
+        delta = result.get("delta_e_per_fu")
+        if delta is not None and (
+            group["best_delta_e_per_fu"] is None or delta < group["best_delta_e_per_fu"]
+        ):
+            group["best_delta_e_per_fu"] = delta
+            group["representative_id"] = result.get("id")
+    return sorted(groups.values(), key=lambda group: group["group_id"])
+
+
+def _lowest_energy_results(results, limit=10):
+    successful = [
+        result for result in results if result.get("delta_e_per_fu") is not None
+    ]
+    failed = [result for result in results if result.get("delta_e_per_fu") is None]
+    return sorted(successful, key=lambda x: x.get("delta_e_per_fu"))[:limit], failed
 
 
 def _generate_markdown(report):
@@ -325,6 +610,53 @@ def _generate_markdown(report):
         lines.append(f"- **Energy**: {parent['parent_energy_per_fu']:.4f} eV/FU")
     lines.append("")
 
+    ase_kpoints = report.get("ase_kpoints", [])
+    bcs_kpoints = report.get("bcs_kpoints", [])
+    bcs_labeled_modes = report.get("bcs_labeled_modes", [])
+    if ase_kpoints or bcs_kpoints or bcs_labeled_modes:
+        lines.append("## High-Symmetry Q-Point Coverage")
+        lines.append("")
+        lines.append(
+            "The phonon band plot uses ASE band-path special points, while symmetry labels come from the BCS/symphon q-point list. These lists can differ."
+        )
+        lines.append("")
+        if ase_kpoints:
+            lines.append("### ASE Band-Path Special Points")
+            lines.append("")
+            lines.append("| Label | q-point |")
+            lines.append("|---|---|")
+            for item in ase_kpoints:
+                qpoint = item.get("qpoint")
+                qstr = ", ".join(f"{x:.6g}" for x in qpoint) if qpoint else ""
+                lines.append(f"| {item.get('label')} | [{qstr}] |")
+            lines.append("")
+        if bcs_kpoints:
+            lines.append("### BCS/Symphon Special Points")
+            lines.append("")
+            lines.append("| Label | q-point in input reciprocal basis |")
+            lines.append("|---|---|")
+            for item in bcs_kpoints:
+                qpoint = item.get("qpoint")
+                qstr = ", ".join(f"{x:.6g}" for x in qpoint) if qpoint else ""
+                lines.append(f"| {item.get('label')} | [{qstr}] |")
+            lines.append("")
+        if bcs_labeled_modes:
+            lines.append("### Symphon Mode Labels At BCS Points")
+            lines.append("")
+            lines.append(
+                "| Q-point | Band | Frequency (THz) | BCS Label | Mulliken Label |"
+            )
+            lines.append("|---|---|---|---|---|")
+            for point in bcs_labeled_modes:
+                label = point.get("label")
+                for mode in point.get("modes", []):
+                    freq = mode.get("frequency_THz")
+                    freq_str = f"{freq:.4f}" if freq is not None else ""
+                    lines.append(
+                        f"| {label} | {mode.get('band_index')} | {freq_str} | {mode.get('bcs_label') or ''} | {mode.get('mulliken_label') or ''} |"
+                    )
+            lines.append("")
+
     if report.get("phonon_band_structure"):
         lines.append("## Phonon Band Structure")
         lines.append("")
@@ -338,15 +670,22 @@ def _generate_markdown(report):
             f"The parent structure has **{len(imaginary)}** unstable phonon mode(s):"
         )
         lines.append("")
-        lines.append("| # | Label | k-point | Band | Frequency (THz) | Degeneracy |")
-        lines.append("|---|-------|---------|------|-----------------|------------|")
+        lines.append(
+            "| # | Q-point | q-point | Band index | Frequency (THz) | BCS Label | Mulliken Label | Degeneracy |"
+        )
+        lines.append("|---|---|---|---|---|---|---|---|")
         for i, m in enumerate(imaginary, 1):
-            label = m.get("bcs_label", m.get("kpoint_label", "?"))
             kpt = m.get("kpoint_label", "?")
+            qpoint = m.get("kpoint")
+            qstr = ", ".join(f"{x:.6g}" for x in qpoint) if qpoint else ""
             band = m.get("band_index", "?")
             freq = m.get("frequency_THz", 0)
             deg = m.get("degeneracy", "?")
-            lines.append(f"| {i} | {label} | {kpt} | {band} | {freq:.3f} | {deg} |")
+            bcs_label = m.get("bcs_label") or ""
+            mulliken_label = m.get("mulliken_label") or ""
+            lines.append(
+                f"| {i} | {kpt} | [{qstr}] | {band} | {freq:.3f} | {bcs_label} | {mulliken_label} | {deg} |"
+            )
         lines.append("")
 
     if report.get("energy_bar_chart"):
@@ -357,12 +696,21 @@ def _generate_markdown(report):
 
     if results:
         sorted_results = sorted(results, key=lambda x: x.get("delta_e_per_fu") or 0)
+        lowest_results, failed_results = _lowest_energy_results(results, limit=10)
 
         lines.append("## Metastable Structures")
         lines.append("")
-        lines.append(f"**{len(results)}** distinct metastable structures found")
-        if results:
-            best = sorted_results[0]
+        n_success = sum(1 for r in results if r.get("status", "success") == "success")
+        n_failed = len(results) - n_success
+        lines.append(
+            f"**{len(results)}** candidate structures generated "
+            f"({n_success} relaxed, {n_failed} failed)"
+        )
+        successful_results = [
+            r for r in sorted_results if r.get("status", "success") == "success"
+        ]
+        if successful_results:
+            best = successful_results[0]
             best_de = best.get("delta_e_per_fu")
             best_sg = best.get("relaxed_spacegroup", "Unknown")
             best_label = best.get("combined_label", "")
@@ -373,57 +721,126 @@ def _generate_markdown(report):
             )
         lines.append("")
 
-        lines.append("### Energy Table (sorted by energy)")
+        lines.append("### Lowest-Energy Structures")
         lines.append("")
-        has_init_sg = any(r.get("initial_spacegroup") for r in sorted_results)
+        if len(lowest_results) < len(
+            [r for r in results if r.get("delta_e_per_fu") is not None]
+        ):
+            lines.append(
+                f"Showing the {len(lowest_results)} lowest-energy relaxed candidates. Full results are available in `report.yaml`."
+            )
+            lines.append("")
+        if failed_results:
+            lines.append(
+                f"{len(failed_results)} failed candidate(s) are omitted from this lowest-energy table; see `report.yaml` for their error details."
+            )
+            lines.append("")
+        if any(r.get("relaxed_group_size", 1) > 1 for r in lowest_results):
+            lines.append(
+                "Rows with the same relaxed group are symmetry/energy-equivalent relaxed structures; all generated candidates remain listed."
+            )
+            lines.append("")
+        has_init_sg = any(r.get("initial_spacegroup") for r in lowest_results)
         if has_init_sg:
             lines.append(
-                "| # | \u0394E/FU (eV) | Initial SG | Relaxed SG | Label | Atoms | Type |"
+                "| # | Status | Attempt | Amplitude | Group | \u0394E/FU (eV) | Initial SG | Relaxed SG | Mode Index | Mode Labels | Label | Initial File | Relaxed File | Atoms | Type | Error |"
             )
             lines.append(
-                "|---|-------------|-----------|-----------|-------|-------|------|"
+                "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"
             )
-            for r in sorted_results:
-                de = (
-                    f"{r['delta_e_per_fu']:.4f}"
-                    if r.get("delta_e_per_fu") is not None
-                    else "N/A"
-                )
-                init_sg = r.get("initial_spacegroup") or "\u2014"
-                rel_sg = r.get("relaxed_spacegroup") or "\u2014"
-                label = r.get("combined_label", "")
-                n = r.get("n_atoms", "?")
-                tp = (
-                    "maximal"
-                    if r.get("opd_is_maximal")
-                    else ("non-max" if r.get("opd_is_maximal") is False else "\u2014")
-                )
-                lines.append(
-                    f"| {r['id']} | {de} | {init_sg} | {rel_sg} | {label} | {n} | {tp} |"
-                )
         else:
-            lines.append("| # | \u0394E/FU (eV) | Relaxed SG | Label | Atoms | Type |")
-            lines.append("|---|-------------|-----------|-------|-------|------|")
-            for r in sorted_results:
-                de = (
-                    f"{r['delta_e_per_fu']:.4f}"
-                    if r.get("delta_e_per_fu") is not None
-                    else "N/A"
+            lines.append(
+                "| # | Status | Attempt | Amplitude | Group | \u0394E/FU (eV) | Relaxed SG | Mode Index | Mode Labels | Label | Initial File | Relaxed File | Atoms | Type | Error |"
+            )
+            lines.append(
+                "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"
+            )
+
+        for r in lowest_results:
+            de = (
+                f"{r['delta_e_per_fu']:.4f}"
+                if r.get("delta_e_per_fu") is not None
+                else "N/A"
+            )
+            init_sg = r.get("initial_spacegroup") or "\u2014"
+            rel_sg = r.get("relaxed_spacegroup") or "\u2014"
+            label = r.get("combined_label", "")
+            mode_indices = r.get("mode_indices", "")
+            mode_labels = r.get("mode_labels", "")
+            n = r.get("n_atoms", "?")
+            group = str(r.get("relaxed_group_id", ""))
+            if r.get("relaxed_group_size", 1) > 1:
+                group += f" ({r.get('relaxed_group_size')} eq.)"
+            initial_file = r.get("initial_structure_file") or ""
+            relaxed_file = (
+                r.get("relaxed_structure_file") or r.get("structure_file") or ""
+            )
+            status = r.get("status", "success")
+            attempt = r.get("attempt") or ""
+            attempt_amplitude = r.get("amplitude")
+            amplitude_str = (
+                f"{attempt_amplitude:.6g}" if attempt_amplitude is not None else ""
+            )
+            error = r.get("error_stage") or ""
+            if r.get("error_message"):
+                error = (
+                    f"{error}: {r.get('error_message')}"
+                    if error
+                    else r.get("error_message")
                 )
-                rel_sg = r.get("relaxed_spacegroup") or "\u2014"
-                label = r.get("combined_label", "")
-                n = r.get("n_atoms", "?")
-                tp = (
-                    "maximal"
-                    if r.get("opd_is_maximal")
-                    else ("non-max" if r.get("opd_is_maximal") is False else "\u2014")
+            tp = (
+                "maximal"
+                if r.get("opd_is_maximal")
+                else ("non-max" if r.get("opd_is_maximal") is False else "\u2014")
+            )
+            if has_init_sg:
+                lines.append(
+                    f"| {r['id']} | {status} | {attempt} | {amplitude_str} | {group} | {de} | {init_sg} | {rel_sg} | {mode_indices} | {mode_labels} | {label} | {initial_file} | {relaxed_file} | {n} | {tp} | {error} |"
                 )
-                lines.append(f"| {r['id']} | {de} | {rel_sg} | {label} | {n} | {tp} |")
+            else:
+                lines.append(
+                    f"| {r['id']} | {status} | {attempt} | {amplitude_str} | {group} | {de} | {rel_sg} | {mode_indices} | {mode_labels} | {label} | {initial_file} | {relaxed_file} | {n} | {tp} | {error} |"
+                )
         lines.append("")
+
+        if failed_results:
+            lines.append("### Failed Candidates")
+            lines.append("")
+            lines.append("Failed candidates are omitted from the lowest-energy table.")
+            lines.append("")
+            lines.append("| # | Label | Mode Index | Mode Labels | Stage | Error |")
+            lines.append("|---|---|---|---|---|---|")
+            for r in failed_results:
+                error = r.get("error_message") or ""
+                lines.append(
+                    f"| {r['id']} | {r.get('combined_label', '')} | {r.get('mode_indices', '')} | {r.get('mode_labels', '')} | {r.get('error_stage') or ''} | {error} |"
+                )
+            lines.append("")
+
+        group_summaries = report.get("relaxed_structure_groups", [])
+        if group_summaries:
+            lines.append("### Relaxed Structure Groups")
+            lines.append("")
+            lines.append(
+                "Equivalent relaxed structures are grouped by relaxed space group, rounded energy, and atom count."
+            )
+            lines.append("")
+            lines.append(
+                "| Group | Representative | Members | Space Group | Best \u0394E/FU (eV) |"
+            )
+            lines.append("|---|---|---|---|---|")
+            for group_info in group_summaries:
+                best = group_info.get("best_delta_e_per_fu")
+                best_str = f"{best:.4f}" if best is not None else "N/A"
+                members = ", ".join(str(i) for i in group_info.get("member_ids", []))
+                lines.append(
+                    f"| {group_info.get('group_id')} | {group_info.get('representative_id')} | {members} | {group_info.get('spacegroup')} | {best_str} |"
+                )
+            lines.append("")
 
         unique_sgs = sorted(
             set(
-                r.get("relaxed_spacegroup", "").split(" (")[0]
+                str(r.get("relaxed_spacegroup")).split(" (")[0]
                 for r in results
                 if r.get("relaxed_spacegroup")
             )
@@ -434,7 +851,7 @@ def _generate_markdown(report):
             sg_best = {}
             for r in results:
                 sg = r.get("relaxed_spacegroup", "")
-                sg_base = sg.split(" (")[0] if sg else "?"
+                sg_base = str(sg).split(" (")[0] if sg else "?"
                 if sg_base not in sg_best or (
                     r.get("delta_e_per_fu") is not None
                     and (
@@ -447,7 +864,9 @@ def _generate_markdown(report):
             lines.append("|------------|----------------|-------|")
             for sg in unique_sgs:
                 count = sum(
-                    1 for r in results if r.get("relaxed_spacegroup", "").startswith(sg)
+                    1
+                    for r in results
+                    if str(r.get("relaxed_spacegroup") or "").startswith(sg)
                 )
                 best_e = sg_best.get(sg)
                 de_str = f"{best_e:.4f}" if best_e is not None else "N/A"

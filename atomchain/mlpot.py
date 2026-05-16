@@ -25,7 +25,7 @@ def relax_with_ml(
     output_file="POSCAR_relax.vasp",
     model_path=None,
     fmax=0.001,
-    cell_factor=1000,
+    cell_factor=100,
     rattle=None,
     **ucf_kwargs,
 ):
@@ -40,7 +40,7 @@ def relax_with_ml(
         traj_file (str, optional): The name of the file to write the trajectory to. Defaults to "relax.traj".
         output_file (str, optional): The name of the file to write the relaxed structure to. Defaults to "POSCAR_relax.vasp".
         fmax (float, optional): The maximum force allowed on each atom. Defaults to 0.001.
-        cell_factor (float, optional): The factor by which to scale the unit cell when relaxing the cell shape. Defaults to 1000.
+        cell_factor (float, optional): The factor by which to scale the unit cell when relaxing the cell shape. Defaults to 100.
         **ucf_kwargs (dict, optional): Additional keyword arguments to pass to the UnitCellFilter constructor.
 
     Returns:

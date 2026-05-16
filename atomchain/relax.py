@@ -10,13 +10,19 @@ import argparse
 from ase.constraints import FixAtoms
 from ase.filters import UnitCellFilter
 from ase.io import Trajectory, read, write
-from ase.optimize import FIRE
+from ase.optimize import BFGS, FIRE
 
 try:
     from ase.constraints import FixSymmetry
 except ImportError:
     from ase.spacegroup.symmetries import FixSymmetry
 from atomchain.init_model import init_calc
+
+
+def _restore_atoms(target, source):
+    """Restore positions and cell without replacing the attached calculator."""
+    target.set_cell(source.get_cell(), scale_atoms=False)
+    target.set_positions(source.get_positions())
 
 
 def relax_with_ml(
@@ -27,7 +33,7 @@ def relax_with_ml(
     traj_file="relax.traj",
     model_path=None,
     fmax=0.001,
-    cell_factor=50,
+    cell_factor=100,
     rattle=None,
     fix_atoms=None,
     **ucf_kwargs,
@@ -42,7 +48,7 @@ def relax_with_ml(
         sym (bool, optional): Whether to impose symmetry constraints on the atoms. Defaults to True.
         traj_file (str, optional): The name of the file to write the trajectory to. Defaults to "relax.traj".
         fmax (float, optional): The maximum force allowed on each atom. Defaults to 0.001.
-        cell_factor (float, optional): The factor by which to scale the unit cell when relaxing the cell shape. Defaults to 1000.
+        cell_factor (float, optional): The factor by which to scale the unit cell when relaxing the cell shape. Defaults to 100.
         **ucf_kwargs (dict, optional): Additional keyword arguments to pass to the UnitCellFilter constructor.
 
     Returns:
@@ -64,8 +70,17 @@ def relax_with_ml(
         ecf = UnitCellFilter(catoms, cell_factor=cell_factor, **ucf_kwargs)
         opt = FIRE(ecf)
         opt.run(fmax=fmax * 10, steps=3500)
-        opt = FIRE(ecf)
-        opt.run(fmax=fmax, steps=5000)
+        first_relaxed = catoms.copy()
+        first_energy = catoms.get_potential_energy()
+
+        opt = BFGS(ecf)
+        opt.run(fmax=fmax, steps=200)
+        second_energy = catoms.get_potential_energy()
+        if second_energy > first_energy:
+            _restore_atoms(catoms, first_relaxed)
+            ecf = UnitCellFilter(catoms, cell_factor=cell_factor, **ucf_kwargs)
+            opt = FIRE(ecf)
+            opt.run(fmax=fmax, steps=5000)
     else:
         opt = FIRE(catoms)
         traj = Trajectory(traj_file, "w", catoms)
@@ -109,8 +124,8 @@ def mlrelax_cli():
     p.add_argument(
         "--cell_factor",
         "-c",
-        help="The factor by which to scale the unit cell when relaxing the cell shape. Default is 1000",
-        default=1000,
+        help="The factor by which to scale the unit cell when relaxing the cell shape. Default is 100",
+        default=100,
         type=float,
     )
     p.add_argument(

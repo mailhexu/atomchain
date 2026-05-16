@@ -1,18 +1,18 @@
 [project]
 name = "atomchain"
-version = "0.1.7"
+version = "0.2.2"
 description = "A library to chain the atomic models with applications"
 authors = [
     {name = "Xu He", email = "mailhexu@gmail.com"},
 ]
-requires-python = ">=3.8"
+requires-python = ">=3.10"
 readme = "README.md"
 license = {text = "BSD-2"}
 dependencies = [
     "numpy",
     "matplotlib",
     "ase",
-    "phonopy",
+    "phonopy==3.0.0",
     "pyyaml",
     "pathos",
     "scipy",
@@ -37,9 +37,6 @@ classifiers = [
 
   # Specify the Python versions you support here.
   "Programming Language :: Python :: 3",
-  "Programming Language :: Python :: 3.7",
-  "Programming Language :: Python :: 3.8",
-  "Programming Language :: Python :: 3.9",
   "Programming Language :: Python :: 3.10",
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
@@ -81,6 +78,10 @@ dev=[
     "black>=21.6b0",
     "pre-commit>=2.13.0",
     "sphinx>=4.1.2",
+]
+
+mace=[
+    "mace-torch",
 ]
 
 [tool.pytest.ini_options]

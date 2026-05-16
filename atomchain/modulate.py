@@ -213,6 +213,7 @@ def get_modulations_with_opd_info(
         symprec=symprec,
         degeneracy_tolerance=degeneracy_tolerance,
     )
+    base_atoms = phonopy_atoms_to_ase(Supercell(phonon.primitive, supercell_matrix))
 
     freq_idx = _find_eigenspace_index(md, target_freq, degeneracy_tolerance)
     if freq_idx is None:
@@ -250,6 +251,7 @@ def get_modulations_with_opd_info(
             results.append(
                 {
                     "atoms": phonopy_atoms_to_ase(cell),
+                    "reference_atoms": base_atoms.copy(),
                     "opd_label": opd_label,
                     "opd_vector_eigvec": np.real(coeff).tolist(),
                     "polarization_direction": pol_dir.tolist(),
@@ -280,6 +282,7 @@ def get_modulations_with_opd_info(
             results.append(
                 {
                     "atoms": phonopy_atoms_to_ase(cell),
+                    "reference_atoms": base_atoms.copy(),
                     "opd_label": opd_label,
                     "opd_vector_eigvec": vec.tolist(),
                     "polarization_direction": None,
@@ -304,6 +307,7 @@ def get_modulations_with_opd_info(
                 results.append(
                     {
                         "atoms": phonopy_atoms_to_ase(cell),
+                        "reference_atoms": base_atoms.copy(),
                         "opd_label": opd_label,
                         "opd_vector_eigvec": np.real(coeff).tolist(),
                         "polarization_direction": None,

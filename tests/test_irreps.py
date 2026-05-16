@@ -226,7 +226,7 @@ def test_get_imaginary_modes_degeneracy():
 
 def test_get_imaginary_modes_threshold():
     all_modes = {
-        "GM": {
+        "X": {
             "frequencies": np.array([-1.0, 0.5, 1.0, 2.0]),
             "modes": [
                 {
@@ -264,3 +264,54 @@ def test_get_imaginary_modes_threshold():
     assert len(imag2) == 2
     assert imag2[0]["frequency"] == -1.0
     assert imag2[1]["frequency"] == 0.5
+
+
+def test_get_imaginary_modes_excludes_gamma_acoustic_modes():
+    all_modes = {
+        "GM": {
+            "frequencies": np.array([-0.03, 0.01, -0.02, -1.2, 2.0, 3.0]),
+            "modes": [
+                {
+                    "band_index": 0,
+                    "frequency": -0.03,
+                    "bcs_label": "GM-acoustic",
+                    "mulliken_label": None,
+                },
+                {
+                    "band_index": 1,
+                    "frequency": 0.01,
+                    "bcs_label": "GM-acoustic",
+                    "mulliken_label": None,
+                },
+                {
+                    "band_index": 2,
+                    "frequency": -0.02,
+                    "bcs_label": "GM-acoustic",
+                    "mulliken_label": None,
+                },
+                {
+                    "band_index": 3,
+                    "frequency": -1.2,
+                    "bcs_label": "GM4-",
+                    "mulliken_label": "T1u",
+                },
+                {
+                    "band_index": 4,
+                    "frequency": 2.0,
+                    "bcs_label": "GM5+",
+                    "mulliken_label": None,
+                },
+                {
+                    "band_index": 5,
+                    "frequency": 3.0,
+                    "bcs_label": "GM6+",
+                    "mulliken_label": None,
+                },
+            ],
+        }
+    }
+
+    imag = get_imaginary_modes(all_modes)
+
+    assert [mode["band_index"] for mode in imag] == [3]
+    assert imag[0]["bcs_label"] == "GM4-"

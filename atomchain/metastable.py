@@ -20,9 +20,11 @@ from __future__ import annotations
 
 import itertools
 import os
+import pickle
 
 import numpy as np
 import spglib
+from ase.build import make_supercell
 from ase.io import write
 
 from atomchain.commensurate import find_commensurate_matrix
@@ -35,6 +37,8 @@ from atomchain.modulate import (
 from atomchain.phonon.frozenphonon import calculate_phonon
 from atomchain.phonon.irreps import get_all_labeled_modes, get_imaginary_modes
 from atomchain.relax import relax_with_ml
+
+_CHECKPOINT_VERSION = "2026-05-15-reference-supercell-v2"
 
 
 def _get_spacegroup(atoms, symprec=0.1):
@@ -88,6 +92,17 @@ def _deduplicate_modes(modes):
     return unique
 
 
+def _attach_qpoints_to_modes(modes, label_to_qpoint):
+    """Add q-point coordinates to mode dictionaries when labels are known."""
+    enriched = []
+    for mode in modes:
+        mode_with_qpoint = dict(mode)
+        qpoint = label_to_qpoint.get(mode.get("kpoint_label"))
+        mode_with_qpoint["kpoint"] = list(qpoint) if qpoint is not None else None
+        enriched.append(mode_with_qpoint)
+    return enriched
+
+
 def _build_combined_label(source_modes, opd_labels=None):
     """Build human-readable label like 'GM4-(a,0,0)/X5+(a,b)' from modes and OPD labels."""
     parts = []
@@ -103,6 +118,411 @@ def _build_combined_label(source_modes, opd_labels=None):
 def _energy_per_fu(energy, n_atoms, n_atoms_per_fu):
     """Convert total energy to per-formula-unit energy."""
     return energy / (n_atoms / n_atoms_per_fu)
+
+
+def _get_spacegroup_or_raise(atoms, stage, symprec=0.1):
+    """Return spacegroup info, raising if spglib cannot identify one."""
+    sg_number, sg_name = _get_spacegroup(atoms, symprec=symprec)
+    if sg_number is None or sg_name is None:
+        raise RuntimeError(f"could not determine {stage} spacegroup")
+    return sg_number, sg_name
+
+
+def _checkpoint_filename(output_dir, checkpoint_path=None):
+    """Return the checkpoint file path for a metastable run."""
+    return checkpoint_path or os.path.join(output_dir, "checkpoint.pkl")
+
+
+def _load_checkpoint(path, metadata=None):
+    """Load checkpointed candidate results, returning an empty list on absence."""
+    if not path or not os.path.exists(path):
+        return []
+    with open(path, "rb") as handle:
+        data = pickle.load(handle)
+    if isinstance(data, dict):
+        checkpoint_metadata = data.get("metadata")
+        if metadata is not None and checkpoint_metadata != metadata:
+            print(
+                "[metastable] Checkpoint metadata does not match current run; starting fresh."
+            )
+            return []
+        return list(data.get("results", []))
+    if metadata is not None:
+        print("[metastable] Legacy checkpoint has no metadata; starting fresh.")
+        return []
+    return list(data)
+
+
+def _write_checkpoint(path, results, metadata=None):
+    """Write completed candidate results to the checkpoint file."""
+    if not path:
+        return
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    checkpoint_results = []
+    for result in results:
+        checkpoint_result = dict(result)
+        checkpoint_result.pop("atoms", None)
+        checkpoint_result.pop("initial_atoms", None)
+        checkpoint_results.append(checkpoint_result)
+    with open(path, "wb") as handle:
+        pickle.dump({"metadata": metadata or {}, "results": checkpoint_results}, handle)
+
+
+def _checkpoint_metadata(
+    atoms,
+    nmax,
+    amplitude,
+    max_cell_size,
+    phonon_ndim,
+    symprec,
+    include_nonmaximal,
+):
+    """Build metadata used to decide whether a checkpoint can be reused."""
+    return {
+        "formula": atoms.get_chemical_formula(mode="metal", empirical=True),
+        "checkpoint_version": _CHECKPOINT_VERSION,
+        "n_atoms": len(atoms),
+        "nmax": int(nmax),
+        "amplitude": float(amplitude),
+        "max_cell_size": int(max_cell_size),
+        "phonon_ndim": np.asarray(phonon_ndim, dtype=int).tolist(),
+        "symprec": float(symprec),
+        "include_nonmaximal": bool(include_nonmaximal),
+    }
+
+
+def _source_modes_for_combo(combo, label_to_qpoint):
+    """Build serializable source-mode metadata for a mode combination."""
+    source_modes = []
+    for mode in combo:
+        m_label = mode["kpoint_label"]
+        m_qpoint = label_to_qpoint.get(m_label)
+        source_modes.append(
+            {
+                "kpoint": list(m_qpoint) if m_qpoint is not None else None,
+                "kpoint_label": m_label,
+                "band_index": mode["band_index"],
+                "frequency": mode["frequency"],
+                "bcs_label": mode.get("bcs_label"),
+            }
+        )
+    return source_modes
+
+
+def _reference_supercell(atoms, supercell_matrix):
+    """Build an undisplaced supercell matching the candidate supercell."""
+    try:
+        return make_supercell(atoms, np.asarray(supercell_matrix, dtype=int))
+    except Exception:
+        return None
+
+
+def _max_supercell_determinant(atoms, max_cell_size):
+    """Convert a maximum atom count to a maximum supercell determinant."""
+    return int(max_cell_size) // len(atoms)
+
+
+def _scale_modulation(mod_atoms, reference_atoms, target_amplitude, original_amplitude):
+    """Scale a distorted candidate back toward its undisplaced supercell."""
+    if (
+        reference_atoms is None
+        or original_amplitude == 0
+        or len(reference_atoms) != len(mod_atoms)
+    ):
+        return mod_atoms.copy()
+    scaled = reference_atoms.copy()
+    scaled.set_cell(mod_atoms.get_cell(), scale_atoms=False)
+    factor = target_amplitude / original_amplitude
+    disp = mod_atoms.get_scaled_positions() - reference_atoms.get_scaled_positions()
+    disp -= np.round(disp)
+    scaled.set_scaled_positions(reference_atoms.get_scaled_positions() + disp * factor)
+    scaled.set_pbc(mod_atoms.get_pbc())
+    return scaled
+
+
+def _get_max_force(atoms, calc):
+    """Run a single-point force calculation and return the max force norm."""
+    force_atoms = atoms.copy()
+    force_atoms.calc = calc
+    forces = np.asarray(force_atoms.get_forces(), dtype=float)
+    if forces.ndim != 2 or forces.shape[1] != 3:
+        raise ValueError("calculator returned forces with unexpected shape")
+    return float(np.max(np.linalg.norm(forces, axis=1)))
+
+
+def _screen_amplitude_by_force(
+    mod_atoms,
+    reference_atoms,
+    amplitude,
+    calc,
+    force_threshold=10.0,
+    max_reductions=10,
+):
+    """Halve amplitude until the pre-relaxation single-point force is acceptable."""
+    attempt_amplitude = amplitude
+    reductions = 0
+    while True:
+        attempt_atoms = _scale_modulation(
+            mod_atoms, reference_atoms, attempt_amplitude, amplitude
+        )
+        max_force = _get_max_force(attempt_atoms, calc)
+        if max_force <= force_threshold:
+            return attempt_atoms, attempt_amplitude, max_force, reductions
+        if reductions >= max_reductions:
+            raise RuntimeError(
+                f"max force {max_force:.6g} eV/Angstrom remains above "
+                f"{force_threshold:.6g} eV/Angstrom after {reductions} amplitude reductions"
+            )
+        next_amplitude = attempt_amplitude / 2.0
+        print(
+            f"[metastable] Pre-relaxation max force {max_force:.6g} eV/Angstrom "
+            f"at amplitude {attempt_amplitude:g}; retrying amplitude {next_amplitude:g}."
+        )
+        attempt_amplitude = next_amplitude
+        reductions += 1
+
+
+def _failure_result(
+    result_id,
+    source_modes,
+    combined_label,
+    opd_label,
+    opd_is_maximal,
+    polarization_direction,
+    supercell_matrix,
+    initial_relpath,
+    initial_atoms,
+    error_stage,
+    error_message,
+    attempt,
+    attempt_amplitude,
+    relaxed=None,
+    relaxed_relpath=None,
+    init_sg_number=None,
+    init_sg_name=None,
+    pre_relax_max_force=None,
+    force_screen_reductions=0,
+):
+    """Build a failed candidate result that can be reported like successes."""
+    result = {
+        "id": result_id,
+        "status": "failed",
+        "error_stage": error_stage,
+        "error_message": str(error_message),
+        "attempt": attempt,
+        "amplitude": float(attempt_amplitude),
+        "pre_relax_max_force": float(pre_relax_max_force)
+        if pre_relax_max_force is not None
+        else None,
+        "force_screen_reductions": int(force_screen_reductions),
+        "energy": None,
+        "energy_per_fu": None,
+        "delta_e_per_fu": None,
+        "initial_spacegroup_number": init_sg_number,
+        "initial_spacegroup_name": init_sg_name,
+        "spacegroup_number": None,
+        "spacegroup_name": None,
+        "source_modes": source_modes,
+        "combined_label": combined_label,
+        "opd_label": opd_label,
+        "opd_is_maximal": opd_is_maximal,
+        "polarization_direction": polarization_direction,
+        "supercell_matrix": np.asarray(supercell_matrix).tolist(),
+        "n_atoms": len(relaxed) if relaxed is not None else len(initial_atoms),
+        "initial_structure_file": initial_relpath,
+        "relaxed_structure_file": relaxed_relpath,
+        "structure_file": relaxed_relpath,
+        "initial_atoms": initial_atoms,
+        "atoms": relaxed,
+        "is_still_imaginary": None,
+    }
+    return result
+
+
+def _relax_candidate_with_retries(
+    result_id,
+    output_dir,
+    mod_atoms,
+    reference_atoms,
+    source_modes,
+    combined_label,
+    opd_label,
+    opd_is_maximal,
+    polarization_direction,
+    supercell_matrix,
+    calc,
+    relax_kwargs,
+    amplitude,
+    parent_energy_per_fu,
+    n_atoms_per_fu,
+):
+    """Relax one candidate, retrying twice with smaller amplitudes on failure."""
+    initial_relpath = os.path.join(
+        "initial_structures", f"initial_{result_id:03d}.vasp"
+    )
+    relaxed_relpath = os.path.join(
+        "relaxed_structures", f"relaxed_{result_id:03d}.vasp"
+    )
+    try:
+        screened_atoms, screened_amplitude, screened_force, reductions = (
+            _screen_amplitude_by_force(mod_atoms, reference_atoms, amplitude, calc)
+        )
+    except Exception as exc:
+        write(os.path.join(output_dir, initial_relpath), mod_atoms)
+        return _failure_result(
+            result_id,
+            source_modes,
+            combined_label,
+            opd_label,
+            opd_is_maximal,
+            polarization_direction,
+            supercell_matrix,
+            initial_relpath,
+            mod_atoms,
+            "pre_relaxation_force",
+            exc,
+            0,
+            amplitude,
+        )
+
+    attempt_amplitudes = [screened_amplitude / (2**i) for i in range(3)]
+    last_error = None
+    last_initial_atoms = screened_atoms
+    last_force = screened_force
+    last_reductions = reductions
+
+    for attempt, attempt_amplitude in enumerate(attempt_amplitudes, start=1):
+        attempt_atoms = _scale_modulation(
+            screened_atoms, reference_atoms, attempt_amplitude, screened_amplitude
+        )
+        last_initial_atoms = attempt_atoms
+        try:
+            last_force = _get_max_force(attempt_atoms, calc)
+        except Exception:
+            last_force = screened_force
+        try:
+            init_sg_number, init_sg_name = _get_spacegroup_or_raise(
+                attempt_atoms, "initial"
+            )
+        except Exception as exc:
+            write(os.path.join(output_dir, initial_relpath), attempt_atoms)
+            return _failure_result(
+                result_id,
+                source_modes,
+                combined_label,
+                opd_label,
+                opd_is_maximal,
+                polarization_direction,
+                supercell_matrix,
+                initial_relpath,
+                attempt_atoms,
+                "initial_symmetry",
+                exc,
+                attempt,
+                attempt_amplitude,
+                pre_relax_max_force=last_force,
+                force_screen_reductions=last_reductions,
+            )
+
+        relax_params = dict(calc=calc, sym=True, relax_cell=True, fmax=0.001)
+        relax_params.update(relax_kwargs)
+        try:
+            relaxed = relax_with_ml(attempt_atoms, **relax_params)
+        except Exception as exc:
+            last_error = exc
+            print(
+                f"[metastable] Relaxation attempt {attempt}/3 failed for "
+                f"result {result_id} at amplitude {attempt_amplitude:g}: {exc}"
+            )
+            continue
+
+        try:
+            energy = relaxed.get_potential_energy()
+            energy_per_fu = _energy_per_fu(energy, len(relaxed), n_atoms_per_fu)
+            delta_e = (
+                energy_per_fu - parent_energy_per_fu
+                if parent_energy_per_fu is not None
+                else None
+            )
+            sg_number, sg_name = _get_spacegroup_or_raise(relaxed, "relaxed")
+        except Exception as exc:
+            write(os.path.join(output_dir, initial_relpath), attempt_atoms)
+            write(os.path.join(output_dir, relaxed_relpath), relaxed)
+            return _failure_result(
+                result_id,
+                source_modes,
+                combined_label,
+                opd_label,
+                opd_is_maximal,
+                polarization_direction,
+                supercell_matrix,
+                initial_relpath,
+                attempt_atoms,
+                "final_symmetry",
+                exc,
+                attempt,
+                attempt_amplitude,
+                relaxed=relaxed,
+                relaxed_relpath=relaxed_relpath,
+                init_sg_number=init_sg_number,
+                init_sg_name=init_sg_name,
+                pre_relax_max_force=last_force,
+                force_screen_reductions=last_reductions,
+            )
+
+        write(os.path.join(output_dir, initial_relpath), attempt_atoms)
+        write(os.path.join(output_dir, relaxed_relpath), relaxed)
+        return {
+            "id": result_id,
+            "status": "success",
+            "error_stage": None,
+            "error_message": None,
+            "attempt": attempt,
+            "amplitude": float(attempt_amplitude),
+            "pre_relax_max_force": float(last_force)
+            if last_force is not None
+            else None,
+            "force_screen_reductions": int(last_reductions),
+            "energy": float(energy),
+            "energy_per_fu": float(energy_per_fu),
+            "delta_e_per_fu": float(delta_e) if delta_e is not None else None,
+            "initial_spacegroup_number": init_sg_number,
+            "initial_spacegroup_name": init_sg_name,
+            "spacegroup_number": sg_number,
+            "spacegroup_name": sg_name,
+            "source_modes": source_modes,
+            "combined_label": combined_label,
+            "opd_label": opd_label,
+            "opd_is_maximal": opd_is_maximal,
+            "polarization_direction": polarization_direction,
+            "supercell_matrix": np.asarray(supercell_matrix).tolist(),
+            "n_atoms": len(relaxed),
+            "initial_structure_file": initial_relpath,
+            "relaxed_structure_file": relaxed_relpath,
+            "structure_file": relaxed_relpath,
+            "initial_atoms": attempt_atoms,
+            "atoms": relaxed,
+            "is_still_imaginary": None,
+        }
+
+    write(os.path.join(output_dir, initial_relpath), last_initial_atoms)
+    return _failure_result(
+        result_id,
+        source_modes,
+        combined_label,
+        opd_label,
+        opd_is_maximal,
+        polarization_direction,
+        supercell_matrix,
+        initial_relpath,
+        last_initial_atoms,
+        "relaxation",
+        last_error,
+        3,
+        attempt_amplitudes[-1],
+        pre_relax_max_force=last_force,
+        force_screen_reductions=last_reductions,
+    )
 
 
 def _deduplicate_results(results, energy_tol=1e-3):
@@ -124,6 +544,99 @@ def _deduplicate_results(results, energy_tol=1e-3):
     return unique
 
 
+def _assign_relaxed_groups(results, energy_tol=1e-3):
+    """Annotate equivalent relaxed structures without removing candidates."""
+    group_by_key = {}
+    next_group_id = 1
+    for result in results:
+        sg = result.get("spacegroup_number")
+        energy = result.get("energy_per_fu")
+        n_atoms = result.get("n_atoms")
+        if sg is None or energy is None:
+            key = ("ungrouped", result.get("id"))
+        else:
+            bucket_e = round(energy / energy_tol) * energy_tol
+            key = (sg, bucket_e, n_atoms)
+        if key not in group_by_key:
+            group_by_key[key] = next_group_id
+            next_group_id += 1
+        result["relaxed_group_id"] = group_by_key[key]
+
+    group_members = {}
+    for result in results:
+        group_members.setdefault(result["relaxed_group_id"], []).append(result["id"])
+
+    for result in results:
+        members = group_members[result["relaxed_group_id"]]
+        result["relaxed_group_members"] = members
+        result["relaxed_group_size"] = len(members)
+        result["relaxed_group_representative"] = result["id"] == members[0]
+    return results
+
+
+def _write_structure_directory_readmes(output_dir, results):
+    """Write README files mapping generated structures to report rows."""
+    for dirname, title, file_key in [
+        (
+            "initial_structures",
+            "Initial Distorted Structures",
+            "initial_structure_file",
+        ),
+        ("relaxed_structures", "Relaxed Structures", "relaxed_structure_file"),
+    ]:
+        dirpath = os.path.join(output_dir, dirname)
+        os.makedirs(dirpath, exist_ok=True)
+        lines = [
+            f"# {title}",
+            "",
+            "Files in this directory are linked to rows in `../report.yaml` and `../report.md`.",
+            "",
+            "| Result ID | File | Label | Relaxed Group | Source Modes | Supercell |",
+            "|---|---|---|---|---|---|",
+        ]
+        for result in results:
+            filename = result.get(file_key)
+            if not filename:
+                continue
+            source_modes = ", ".join(
+                f"{m.get('bcs_label') or m.get('kpoint_label')}:{m.get('band_index')}"
+                for m in result.get("source_modes", [])
+            )
+            group = result.get("relaxed_group_id", "")
+            if result.get("relaxed_group_size", 1) > 1:
+                group = f"{group} ({result.get('relaxed_group_size')} equivalent)"
+            lines.append(
+                "| {id} | {file} | {label} | {group} | {modes} | {supercell} |".format(
+                    id=result.get("id"),
+                    file=os.path.basename(filename),
+                    label=result.get("combined_label", ""),
+                    group=group,
+                    modes=source_modes,
+                    supercell=result.get("supercell_matrix"),
+                )
+            )
+        lines.append("")
+        with open(os.path.join(dirpath, "README.md"), "w", encoding="utf-8") as handle:
+            handle.write("\n".join(lines))
+
+
+def _get_ase_bandpath_kpoints(phonopy_yaml_path):
+    """Return ASE band-path special points in the phonopy primitive basis."""
+    try:
+        from ase.cell import Cell
+        from phonopy import load
+
+        phonon = load(phonopy_yaml=phonopy_yaml_path)
+        bandpath = Cell(phonon.primitive.cell).bandpath(npoints=2)
+    except Exception as exc:
+        print(f"[metastable] Warning: could not get ASE bandpath k-points: {exc}")
+        return []
+    return [
+        {"label": label, "qpoint": [float(x) for x in np.asarray(qpoint).flat]}
+        for label, qpoint in sorted(bandpath.special_points.items())
+    ]
+
+
 def explore_metastable_states(
     atoms,
     calc=None,
@@ -139,6 +652,9 @@ def explore_metastable_states(
     include_nonmaximal=True,
     deduplicate=True,
     compute_phonons=False,
+    checkpoint_path=None,
+    restart=True,
+    relax_parent=True,
 ) -> list[dict]:
     """Discover metastable structures from imaginary phonon modes.
 
@@ -201,12 +717,22 @@ def explore_metastable_states(
             ``(a,b,0)`` for a 3-fold degenerate mode), which can produce
             additional distinct local minima.  Default: True.
         deduplicate:
-            If True, remove duplicate relaxed structures (same space
-            group and similar energy).  Default: True.
+            If True, assign equivalent relaxed-structure groups using
+            space group and similar energy. All generated candidates remain
+            in the returned results. Default: True.
         compute_phonons:
             If True, compute phonon band structures for each relaxed
             metastable structure. Results are cached in
             ``output_dir/metastable_phonon/``.  Default: False.
+        checkpoint_path:
+            Optional checkpoint file path. Defaults to
+            ``output_dir/checkpoint.pkl``.
+        restart:
+            If True, load the checkpoint by default and skip completed
+            candidate IDs. Default: True.
+        relax_parent:
+            If True, relax the parent structure with symmetry and cell relaxation
+            before computing parent phonons. Default: True.
 
     Returns:
         dict with keys:
@@ -272,11 +798,18 @@ def explore_metastable_states(
     if phonon_ndim is None:
         phonon_ndim = np.diag([2, 2, 2])
 
+    if relax_parent:
+        print("[metastable] Step 1: Relaxing parent structure...")
+        parent_relax_params = dict(calc=calc, sym=True, relax_cell=True, fmax=0.001)
+        parent_relax_params.update(relax_kwargs)
+        atoms = relax_with_ml(atoms, **parent_relax_params)
+        write(os.path.join(output_dir, "parent_relaxed.vasp"), atoms)
+
     n_atoms_per_fu = len(atoms)
 
     phonon_save_dir = os.path.join(output_dir, "parent_phonon_save")
 
-    print("[metastable] Step 1: Computing phonons...")
+    print("[metastable] Step 2: Computing phonons...")
     calculate_phonon(
         atoms,
         calc=calc,
@@ -288,7 +821,7 @@ def explore_metastable_states(
 
     phonopy_yaml_path = os.path.join(phonon_save_dir, "phonopy_params.yaml")
 
-    print("[metastable] Step 2: Computing parent energy...")
+    print("[metastable] Step 3: Computing parent energy...")
     atoms_copy = atoms.copy()
     atoms_copy.calc = calc
     try:
@@ -301,10 +834,16 @@ def explore_metastable_states(
         parent_energy_per_fu = None
         print("[metastable] Parent energy: could not compute (mock calculator?)")
 
-    print("[metastable] Step 3: Labeling modes...")
+    print("[metastable] Step 4: Labeling modes...")
     all_labeled_modes = get_all_labeled_modes(phonopy_yaml_path, symprec=symprec)
+    ase_kpoints = _get_ase_bandpath_kpoints(phonopy_yaml_path)
+    label_to_qpoint = _build_label_to_qpoint(atoms, symprec=symprec)
+    bcs_kpoints = [
+        {"label": label, "qpoint": [float(x) for x in np.asarray(qpoint).flat]}
+        for label, qpoint in sorted(label_to_qpoint.items())
+    ]
 
-    print("[metastable] Step 4: Filtering imaginary modes...")
+    print("[metastable] Step 5: Filtering imaginary modes...")
     imaginary_modes = get_imaginary_modes(all_labeled_modes)
 
     if len(imaginary_modes) == 0:
@@ -313,18 +852,43 @@ def explore_metastable_states(
             "results": [],
             "imaginary_modes": [],
             "phonon_dir": phonon_save_dir,
+            "ase_kpoints": ase_kpoints,
+            "bcs_kpoints": bcs_kpoints,
+            "bcs_labeled_modes": all_labeled_modes,
+            "parent_atoms": atoms,
         }
 
-    imaginary_modes = _deduplicate_modes(imaginary_modes)
+    imaginary_modes = _attach_qpoints_to_modes(
+        _deduplicate_modes(imaginary_modes), label_to_qpoint
+    )
     print(
         f"[metastable] Found {len(imaginary_modes)} unique imaginary mode(s) after deduplication."
     )
 
-    label_to_qpoint = _build_label_to_qpoint(atoms, symprec=symprec)
-
-    print("[metastable] Step 5: Generating mode combinations...")
+    print("[metastable] Step 6: Generating mode combinations...")
     results = []
     result_id = 1
+    initial_dir = os.path.join(output_dir, "initial_structures")
+    relaxed_dir = os.path.join(output_dir, "relaxed_structures")
+    os.makedirs(initial_dir, exist_ok=True)
+    os.makedirs(relaxed_dir, exist_ok=True)
+    checkpoint_file = _checkpoint_filename(output_dir, checkpoint_path)
+    checkpoint_metadata = _checkpoint_metadata(
+        atoms,
+        nmax,
+        amplitude,
+        max_cell_size,
+        phonon_ndim,
+        symprec,
+        include_nonmaximal,
+    )
+    if restart:
+        results = _load_checkpoint(checkpoint_file, metadata=checkpoint_metadata)
+        if results:
+            print(
+                f"[metastable] Loaded {len(results)} checkpointed candidate(s) from {checkpoint_file}."
+            )
+    completed_ids = {result.get("id") for result in results}
 
     for r in range(1, min(nmax, len(imaginary_modes)) + 1):
         for combo in itertools.combinations(imaginary_modes, r):
@@ -350,7 +914,14 @@ def explore_metastable_states(
                 continue
 
             unique_kpoints = _deduplicate_kpoints(qpoints_in_combo)
-            supercell_matrix = find_commensurate_matrix(unique_kpoints, max_cell_size)
+            max_det = _max_supercell_determinant(atoms, max_cell_size)
+            if max_det < 1:
+                print(
+                    f"[metastable] max_cell_size={max_cell_size} is smaller than "
+                    f"the parent cell ({len(atoms)} atoms). Skipping."
+                )
+                continue
+            supercell_matrix = find_commensurate_matrix(unique_kpoints, max_det)
             if supercell_matrix is None:
                 print("[metastable] No commensurate supercell found. Skipping.")
                 continue
@@ -358,6 +929,13 @@ def explore_metastable_states(
             print(
                 f"[metastable] Commensurate supercell matrix: {supercell_matrix.tolist()}"
             )
+            reference_atoms = _reference_supercell(atoms, supercell_matrix)
+            if reference_atoms is not None and len(reference_atoms) > max_cell_size:
+                print(
+                    f"[metastable] Commensurate supercell has {len(reference_atoms)} atoms, "
+                    f"above max_cell_size={max_cell_size}. Skipping."
+                )
+                continue
 
             if r == 1:
                 mode = combo[0]
@@ -373,78 +951,58 @@ def explore_metastable_states(
                 )
 
                 for info in mod_info_list:
+                    if result_id in completed_ids:
+                        print(
+                            f"[metastable] Skipping checkpointed candidate {result_id}."
+                        )
+                        result_id += 1
+                        continue
+
                     mod_atoms = info["atoms"]
+                    mode_reference_atoms = info.get("reference_atoms", reference_atoms)
                     opd_label = info["opd_label"]
-                    init_sg_number, init_sg_name = _get_spacegroup(mod_atoms)
 
                     print(
                         f"[metastable] Relaxing {mode.get('bcs_label', '?')}{opd_label} "
                         f"(maximal={info['is_maximal']})..."
                     )
 
-                    relax_params = dict(
-                        calc=calc, sym=True, relax_cell=True, fmax=0.001
-                    )
-                    relax_params.update(relax_kwargs)
-                    relaxed = relax_with_ml(mod_atoms, **relax_params)
-
-                    energy = relaxed.get_potential_energy()
-                    energy_per_fu = _energy_per_fu(energy, len(relaxed), n_atoms_per_fu)
-                    delta_e = (
-                        energy_per_fu - parent_energy_per_fu
-                        if parent_energy_per_fu is not None
-                        else None
-                    )
-                    sg_number, sg_name = _get_spacegroup(relaxed)
-
-                    struct_filename = f"metastable_{result_id:03d}.vasp"
-                    struct_filepath = os.path.join(output_dir, struct_filename)
-                    write(struct_filepath, relaxed)
-
-                    m_label = mode["kpoint_label"]
-                    m_qpoint = label_to_qpoint.get(m_label)
-                    source_modes = [
-                        {
-                            "kpoint": list(m_qpoint) if m_qpoint is not None else None,
-                            "kpoint_label": m_label,
-                            "band_index": mode["band_index"],
-                            "frequency": mode["frequency"],
-                            "bcs_label": mode.get("bcs_label"),
-                        }
-                    ]
-
+                    source_modes = _source_modes_for_combo(combo, label_to_qpoint)
                     combined_label = _build_combined_label(
                         source_modes, opd_labels=[opd_label]
                     )
-
-                    result = {
-                        "id": result_id,
-                        "energy": float(energy),
-                        "energy_per_fu": float(energy_per_fu),
-                        "delta_e_per_fu": float(delta_e),
-                        "initial_spacegroup_number": init_sg_number,
-                        "initial_spacegroup_name": init_sg_name,
-                        "spacegroup_number": sg_number,
-                        "spacegroup_name": sg_name,
-                        "source_modes": source_modes,
-                        "combined_label": combined_label,
-                        "opd_label": opd_label,
-                        "opd_is_maximal": info["is_maximal"],
-                        "polarization_direction": info.get("polarization_direction"),
-                        "supercell_matrix": supercell_matrix.tolist(),
-                        "n_atoms": len(relaxed),
-                        "structure_file": struct_filename,
-                        "is_still_imaginary": None,
-                    }
+                    result = _relax_candidate_with_retries(
+                        result_id,
+                        output_dir,
+                        mod_atoms,
+                        mode_reference_atoms,
+                        source_modes,
+                        combined_label,
+                        opd_label,
+                        info["is_maximal"],
+                        info.get("polarization_direction"),
+                        supercell_matrix,
+                        calc,
+                        relax_kwargs,
+                        amplitude,
+                        parent_energy_per_fu,
+                        n_atoms_per_fu,
+                    )
 
                     results.append(result)
+                    _write_checkpoint(
+                        checkpoint_file, results, metadata=checkpoint_metadata
+                    )
                     result_id += 1
 
+                    delta_e = result.get("delta_e_per_fu")
                     delta_str = f"{delta_e:.4f}" if delta_e is not None else "N/A"
                     maximal_str = "maximal" if info["is_maximal"] else "non-maximal"
                     print(
                         f"[metastable] Result {result_id - 1}: ΔE={delta_str} eV/FU, "
-                        f"spacegroup={sg_name} ({sg_number}), n_atoms={len(relaxed)}, "
+                        f"status={result.get('status')}, "
+                        f"spacegroup={result.get('spacegroup_name')} ({result.get('spacegroup_number')}), "
+                        f"n_atoms={result.get('n_atoms')}, "
                         f"label={combined_label} [{maximal_str}]"
                     )
 
@@ -454,13 +1012,15 @@ def explore_metastable_states(
                     qpoint = label_to_qpoint.get(m["kpoint_label"])
                     mode_specs.append((qpoint, m["band_index"]))
 
-                mod_info_list, _ = get_multi_mode_modulations_with_info(
-                    phonopy_yaml_path,
-                    mode_specs=mode_specs,
-                    supercell_matrix=supercell_matrix,
-                    amplitude=amplitude,
-                    symprec=symprec,
-                    include_nonmaximal=include_nonmaximal,
+                mod_info_list, multi_reference_atoms = (
+                    get_multi_mode_modulations_with_info(
+                        phonopy_yaml_path,
+                        mode_specs=mode_specs,
+                        supercell_matrix=supercell_matrix,
+                        amplitude=amplitude,
+                        symprec=symprec,
+                        include_nonmaximal=include_nonmaximal,
+                    )
                 )
 
                 if len(mod_info_list) == 0:
@@ -472,95 +1032,74 @@ def explore_metastable_states(
                 )
 
                 for i, mod_info in enumerate(mod_info_list):
+                    if result_id in completed_ids:
+                        print(
+                            f"[metastable] Skipping checkpointed candidate {result_id}."
+                        )
+                        result_id += 1
+                        continue
+
                     mod_atoms = mod_info["atoms"]
+                    mode_reference_atoms = multi_reference_atoms or reference_atoms
                     opd_labels = mod_info["opd_labels"]
                     all_maximal = mod_info["opd_is_maximal"]
-                    init_sg_number, init_sg_name = _get_spacegroup(mod_atoms)
 
                     print(
                         f"[metastable] Relaxing modulated structure "
                         f"{i + 1}/{len(mod_info_list)}..."
                     )
 
-                    relax_params = dict(
-                        calc=calc, sym=True, relax_cell=True, fmax=0.001
-                    )
-                    relax_params.update(relax_kwargs)
-                    relaxed = relax_with_ml(mod_atoms, **relax_params)
-
-                    energy = relaxed.get_potential_energy()
-                    energy_per_fu = _energy_per_fu(energy, len(relaxed), n_atoms_per_fu)
-                    delta_e = (
-                        energy_per_fu - parent_energy_per_fu
-                        if parent_energy_per_fu is not None
-                        else None
-                    )
-                    sg_number, sg_name = _get_spacegroup(relaxed)
-
-                    struct_filename = f"metastable_{result_id:03d}.vasp"
-                    struct_filepath = os.path.join(output_dir, struct_filename)
-                    write(struct_filepath, relaxed)
-
-                    source_modes = []
-                    for mode in combo:
-                        m_label = mode["kpoint_label"]
-                        m_qpoint = label_to_qpoint.get(m_label)
-                        source_modes.append(
-                            {
-                                "kpoint": list(m_qpoint)
-                                if m_qpoint is not None
-                                else None,
-                                "kpoint_label": m_label,
-                                "band_index": mode["band_index"],
-                                "frequency": mode["frequency"],
-                                "bcs_label": mode.get("bcs_label"),
-                            }
-                        )
-
+                    source_modes = _source_modes_for_combo(combo, label_to_qpoint)
                     combined_label = _build_combined_label(
                         source_modes, opd_labels=opd_labels
                     )
-
-                    result = {
-                        "id": result_id,
-                        "energy": float(energy),
-                        "energy_per_fu": float(energy_per_fu),
-                        "delta_e_per_fu": float(delta_e),
-                        "initial_spacegroup_number": init_sg_number,
-                        "initial_spacegroup_name": init_sg_name,
-                        "spacegroup_number": sg_number,
-                        "spacegroup_name": sg_name,
-                        "source_modes": source_modes,
-                        "combined_label": combined_label,
-                        "opd_label": "/".join(opd_labels) if opd_labels else None,
-                        "opd_is_maximal": all_maximal,
-                        "polarization_direction": None,
-                        "supercell_matrix": supercell_matrix.tolist(),
-                        "n_atoms": len(relaxed),
-                        "structure_file": struct_filename,
-                        "is_still_imaginary": None,
-                    }
+                    result = _relax_candidate_with_retries(
+                        result_id,
+                        output_dir,
+                        mod_atoms,
+                        mode_reference_atoms,
+                        source_modes,
+                        combined_label,
+                        "/".join(opd_labels) if opd_labels else None,
+                        all_maximal,
+                        None,
+                        supercell_matrix,
+                        calc,
+                        relax_kwargs,
+                        amplitude,
+                        parent_energy_per_fu,
+                        n_atoms_per_fu,
+                    )
 
                     results.append(result)
+                    _write_checkpoint(
+                        checkpoint_file, results, metadata=checkpoint_metadata
+                    )
                     result_id += 1
 
+                    delta_e = result.get("delta_e_per_fu")
                     delta_str = f"{delta_e:.4f}" if delta_e is not None else "N/A"
                     maximal_str = "maximal" if all_maximal else "non-maximal"
                     print(
                         f"[metastable] Result {result_id - 1}: ΔE={delta_str} eV/FU, "
-                        f"spacegroup={sg_name} ({sg_number}), n_atoms={len(relaxed)}, "
+                        f"status={result.get('status')}, "
+                        f"spacegroup={result.get('spacegroup_name')} ({result.get('spacegroup_number')}), "
+                        f"n_atoms={result.get('n_atoms')}, "
                         f"label={combined_label} [{maximal_str}]"
                     )
 
     if deduplicate:
         n_before = len(results)
-        results = _deduplicate_results(results)
-        n_after = len(results)
-        if n_before != n_after:
-            print(f"[metastable] Deduplicated {n_before} → {n_after} results.")
+        _assign_relaxed_groups(results)
+        n_groups = len({result["relaxed_group_id"] for result in results})
+        if n_before != n_groups:
+            print(
+                f"[metastable] Grouped {n_before} results into {n_groups} equivalent relaxed-structure group(s)."
+            )
+    else:
+        _assign_relaxed_groups(results)
 
-    for i, r in enumerate(results):
-        r["id"] = i + 1
+    _write_structure_directory_readmes(output_dir, results)
 
     if compute_phonons and results:
         print(
@@ -575,12 +1114,19 @@ def explore_metastable_states(
         "results": results,
         "imaginary_modes": imaginary_modes,
         "phonon_dir": phonon_save_dir,
+        "ase_kpoints": ase_kpoints,
+        "bcs_kpoints": bcs_kpoints,
+        "bcs_labeled_modes": all_labeled_modes,
+        "checkpoint_file": checkpoint_file,
+        "parent_atoms": atoms,
     }
 
 
 def _compute_phonons_for_results(results, calc, output_dir, phonon_ndim, phonon_kwargs):
     """Compute and cache phonons for each metastable structure."""
     for r in results:
+        if r.get("status", "success") != "success":
+            continue
         struct_file = r.get("structure_file")
         if not struct_file:
             continue

@@ -3,6 +3,37 @@ Initialize model for calculation.
 """
 
 import os
+import urllib.error
+import urllib.request
+
+MACE_R2SCAN_MODEL_URL = (
+    "https://huggingface.co/mace-foundations/mace-mh-1/resolve/main/mace-mh-1.model"
+)
+MACE_R2SCAN_MODEL_PATH = "~/.config/mace/mace-mh-1.model"
+
+
+def _ensure_mace_r2scan_model(model_path=None):
+    """Return a local MACE R2SCAN model path, downloading it when missing."""
+    mace_model_file = os.path.expanduser(model_path or MACE_R2SCAN_MODEL_PATH)
+    if os.path.exists(mace_model_file):
+        return mace_model_file
+
+    os.makedirs(os.path.dirname(mace_model_file), exist_ok=True)
+    try:
+        print(
+            "MACE R2SCAN model file not found. Downloading "
+            f"{MACE_R2SCAN_MODEL_URL} to {mace_model_file}..."
+        )
+        urllib.request.urlretrieve(MACE_R2SCAN_MODEL_URL, mace_model_file)
+    except (OSError, urllib.error.URLError) as exc:
+        if os.path.exists(mace_model_file):
+            os.remove(mace_model_file)
+        raise RuntimeError(
+            "MACE R2SCAN model file is not available and automatic download failed. "
+            f"Download it manually from {MACE_R2SCAN_MODEL_URL} and save it as "
+            f"{mace_model_file}."
+        ) from exc
+    return mace_model_file
 
 
 def init_calc(model_type="chgnet", model_path=None):
@@ -68,16 +99,12 @@ def init_calc(model_type="chgnet", model_path=None):
         import torch
         from mace.calculators import mace_mp
 
-        mace_model_file = os.path.expanduser("~/.config/mace/mace-mh-1.model")
-        if not os.path.exists(mace_model_file):
-            raise Exception("""MACE MODEL file for r2scan is not found. 
-            Download it from https://github.com/ACEsuit/mace-foundations/releases, 
-            and put to ~/.config/mace/mace-mh-1.model""")
+        mace_model_file = _ensure_mace_r2scan_model(model_path=model_path)
         device = "cuda" if torch.cuda.is_available() else "cpu"
         calc = mace_mp(
-            os.path.expanduser("~/.config/mace/mace-mh-1.model"),
+            mace_model_file,
             device=device,
-            default_dtype="float32",
+            default_dtype="float64",
             dispersion=False,
             dispersion_xc="pbe",
             head="matpes_r2scan",

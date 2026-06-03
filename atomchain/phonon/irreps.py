@@ -3,8 +3,11 @@ from atomchain.kpoints import _patch_symphon
 
 def _symphon_irreps():
     _patch_symphon()
-    from symphon.irreps.highsym import get_all_irreps_phonopy
-    from symphon.irreps.phonopy import IrRepsPhonopy
+    try:
+        from symphon.irreps.highsym import get_all_irreps_phonopy
+        from symphon.irreps.phonopy import IrRepsPhonopy
+    except ModuleNotFoundError:
+        from symphon.irreps_anaddb import IrRepsPhonopy, get_all_irreps_phonopy
 
     return get_all_irreps_phonopy, IrRepsPhonopy
 

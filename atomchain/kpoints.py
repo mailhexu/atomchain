@@ -37,7 +37,10 @@ def get_high_symmetry_kpoints(atoms, symprec=1e-5):
         cell=atoms.get_cell(),
     )
 
-    from symphon.irreps.highsym import get_special_qpoints
+    try:
+        from symphon.irreps.highsym import get_special_qpoints
+    except ModuleNotFoundError:
+        from symphon.irreps_anaddb import get_special_qpoints
 
     sqs = get_special_qpoints(pa, symprec=symprec)
     return [{"label": sq["label"], "qpoint": sq["qpoint_input"]} for sq in sqs]

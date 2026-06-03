@@ -1,5 +1,6 @@
 import numpy as np
 import pytest
+import yaml
 from ase.build import bulk
 from ase.calculators.singlepoint import SinglePointCalculator
 from ase.io import read, write
@@ -83,6 +84,16 @@ def test_hist_read_write_round_trip(tmp_path):
     assert (tmp_path / "test_HIST.yaml").exists()
 
 
+def test_hist_metadata_uses_relative_hist_path(tmp_path):
+    hist = tmp_path / "data" / "test_HIST.nc"
+    sidecar = tmp_path / "metadata" / "test_HIST.nc.yaml"
+
+    write_abinit_hist([frame()], hist, metadata=sidecar)
+
+    data = yaml.safe_load(sidecar.read_text(encoding="utf-8"))
+    assert data["hist_file"] == "../data/test_HIST.nc"
+
+
 def test_hist_writer_emits_abipy_energy_companion_terms(tmp_path):
     from scipy.io import netcdf_file
 
@@ -92,6 +103,19 @@ def test_hist_writer_emits_abipy_energy_companion_terms(tmp_path):
         assert "etotal" in nc.variables
         assert "ekin" in nc.variables
         assert "entropy" in nc.variables
+
+
+def test_hist_writer_emits_fortran_multibinit_compatibility_terms(tmp_path):
+    from scipy.io import netcdf_file
+
+    path = tmp_path / "fortran_HIST.nc"
+    write_abinit_hist([frame()], path)
+    with netcdf_file(str(path), "r", mmap=False) as nc:
+        assert "xyz" in nc.dimensions
+        assert "acell" in nc.variables
+        assert "mdtime" in nc.variables
+        assert "vel" in nc.variables
+        assert nc.variables["rprimd"].dimensions == ("time", "xyz", "xyz")
 
 
 def test_hist_round_trip_preserves_unwrapped_scaled_positions(tmp_path):

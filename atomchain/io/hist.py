@@ -6,6 +6,7 @@ files: structures, total energies, Cartesian forces, reduced forces, and stress.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import numpy as np
@@ -26,6 +27,7 @@ from atomchain.ddb.conventions import (
 HIST_SCHEMA = {
     "typat": {"shape": ("natom",), "units": "one-based species index"},
     "znucl": {"shape": ("ntypat",), "units": "atomic number"},
+    "acell": {"shape": ("time", 3), "units": "Bohr scale factors"},
     "rprimd": {"shape": ("time", 3, 3), "units": "Bohr"},
     "xred": {"shape": ("time", "natom", 3), "units": "fractional"},
     "xcart": {"shape": ("time", "natom", 3), "units": "Bohr"},
@@ -35,6 +37,8 @@ HIST_SCHEMA = {
     "fcart": {"shape": ("time", "natom", 3), "units": "Hartree/Bohr"},
     "fred": {"shape": ("time", "natom", 3), "units": "Hartree"},
     "strten": {"shape": ("time", 6), "units": "Hartree/Bohr^3"},
+    "vel": {"shape": ("time", "natom", 3), "units": "Bohr/atomic time unit"},
+    "mdtime": {"shape": ("time",), "units": "time step index"},
 }
 
 
@@ -165,26 +169,35 @@ def write_abinit_hist(frames, filename, metadata=None, strict=True):
         nc.createDimension("natom", natom)
         nc.createDimension("ntypat", ntypat)
         nc.createDimension("npsp", ntypat)
-        nc.createDimension("three", 3)
+        nc.createDimension("xyz", 3)
         nc.createDimension("six", 6)
         _write_var(nc, "typat", "i", ("natom",), np.array(typat, dtype=np.int32))
         _write_var(nc, "znucl", "d", ("ntypat",), np.array(znucl, dtype=float))
-        _write_var(nc, "rprimd", "d", ("time", "three", "three"), rprimd)
-        _write_var(nc, "xred", "d", ("time", "natom", "three"), xred)
-        _write_var(nc, "xcart", "d", ("time", "natom", "three"), xcart)
+        _write_var(nc, "acell", "d", ("time", "xyz"), np.ones((ntime, 3), dtype=float))
+        _write_var(nc, "rprimd", "d", ("time", "xyz", "xyz"), rprimd)
+        _write_var(nc, "xred", "d", ("time", "natom", "xyz"), xred)
+        _write_var(nc, "xcart", "d", ("time", "natom", "xyz"), xcart)
         _write_var(nc, "etotal", "d", ("time",), np.array(etotal, dtype=float))
         _write_var(nc, "ekin", "d", ("time",), np.zeros(ntime, dtype=float))
         _write_var(nc, "entropy", "d", ("time",), np.zeros(ntime, dtype=float))
         _write_var(
-            nc, "fcart", "d", ("time", "natom", "three"), np.array(fcart, dtype=float)
+            nc, "fcart", "d", ("time", "natom", "xyz"), np.array(fcart, dtype=float)
         )
         _write_var(
-            nc, "fred", "d", ("time", "natom", "three"), np.array(fred, dtype=float)
+            nc, "fred", "d", ("time", "natom", "xyz"), np.array(fred, dtype=float)
         )
         _write_var(nc, "strten", "d", ("time", "six"), np.array(strten, dtype=float))
+        _write_var(
+            nc,
+            "vel",
+            "d",
+            ("time", "natom", "xyz"),
+            np.zeros((ntime, natom, 3), dtype=float),
+        )
+        _write_var(nc, "mdtime", "d", ("time",), np.arange(ntime, dtype=float))
 
     if metadata is not None:
-        write_hist_metadata(frames, metadata, hist_filename=str(path))
+        write_hist_metadata(frames, metadata, hist_filename=path)
     return path
 
 
@@ -201,17 +214,28 @@ def traj_to_hist(traj_file, hist_file, metadata=None, strict=True):
 
 
 def write_hist_metadata(frames, filename, hist_filename=None):
+    path = Path(filename)
     data = {
         "format": "atomchain-hist-sidecar-v1",
-        "hist_file": hist_filename,
+        "hist_file": _relative_metadata_path(path, hist_filename),
         "nframes": len(frames),
         "provenance": [dict(frame.info) for frame in frames],
     }
-    path = Path(filename)
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8") as handle:
         yaml.safe_dump(data, handle, sort_keys=True)
     return path
+
+
+def _relative_metadata_path(metadata_path, target):
+    if target is None:
+        return None
+    path = Path(target)
+    if not path.is_absolute():
+        return path.as_posix()
+    return os.path.relpath(
+        path.resolve(), Path(metadata_path).parent.resolve()
+    ).replace(os.sep, "/")
 
 
 def _load_frames(frames):

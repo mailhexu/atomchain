@@ -13,11 +13,15 @@ How to run:
     pytest  # runs all tests
 """
 
+import sys
+import types
+
 import pytest
 
 from atomchain.init_model import (
     MACE_R2SCAN_MODEL_URL,
     _ensure_mace_r2scan_model,
+    _get_torch_device,
     init_calc,
 )
 
@@ -76,6 +80,56 @@ def test_init_calc_mace():
     assert hasattr(calc, "calculate")
 
 
+def test_mace_device_prefers_cuda_then_mps_then_cpu():
+    """MACE device selection should support CUDA and Apple Silicon MPS."""
+    torch = types.SimpleNamespace(
+        cuda=types.SimpleNamespace(is_available=lambda: True),
+        backends=types.SimpleNamespace(
+            mps=types.SimpleNamespace(is_available=lambda: True)
+        ),
+    )
+    assert _get_torch_device(torch) == "cuda"
+
+    torch.cuda.is_available = lambda: False
+    assert _get_torch_device(torch) == "mps"
+
+    torch.backends.mps.is_available = lambda: False
+    assert _get_torch_device(torch) == "cpu"
+
+    torch.backends = types.SimpleNamespace()
+    assert _get_torch_device(torch) == "cpu"
+
+
+def test_init_calc_mace_uses_mps_when_cuda_unavailable(monkeypatch):
+    """MACE initialization should pass device='mps' on Apple Silicon."""
+    calls = []
+
+    fake_torch = types.SimpleNamespace(
+        cuda=types.SimpleNamespace(is_available=lambda: False),
+        backends=types.SimpleNamespace(
+            mps=types.SimpleNamespace(is_available=lambda: True)
+        ),
+    )
+
+    def fake_mace_mp(**kwargs):
+        calls.append(kwargs)
+        return types.SimpleNamespace(calculate=lambda *args, **kwargs: None)
+
+    fake_mace = types.ModuleType("mace")
+    fake_calculators = types.ModuleType("mace.calculators")
+    fake_calculators.mace_mp = fake_mace_mp
+    fake_mace.calculators = fake_calculators
+
+    monkeypatch.setitem(sys.modules, "torch", fake_torch)
+    monkeypatch.setitem(sys.modules, "mace", fake_mace)
+    monkeypatch.setitem(sys.modules, "mace.calculators", fake_calculators)
+
+    calc = init_calc(model_type="mace")
+
+    assert calc is not None
+    assert calls[0]["device"] == "mps"
+
+
 def test_mace_r2scan_model_downloads_when_missing(tmp_path, monkeypatch):
     """Missing MACE R2SCAN model should be downloaded to the requested path."""
     model_path = tmp_path / "mace" / "mace-mh-1.model"
@@ -94,6 +148,29 @@ def test_mace_r2scan_model_downloads_when_missing(tmp_path, monkeypatch):
     assert result == str(model_path)
     assert model_path.exists()
     assert calls == [(MACE_R2SCAN_MODEL_URL, str(model_path))]
+
+
+def test_mace_r2scan_model_download_allows_current_directory_path(
+    tmp_path, monkeypatch
+):
+    """Custom model paths without a directory component should be valid."""
+    model_path = tmp_path / "mace-mh-1.model"
+    calls = []
+
+    def mock_urlretrieve(url, filename):
+        calls.append((url, filename))
+        model_path.write_text("model", encoding="utf-8")
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        "atomchain.init_model.urllib.request.urlretrieve", mock_urlretrieve
+    )
+
+    result = _ensure_mace_r2scan_model(model_path="mace-mh-1.model")
+
+    assert result == "mace-mh-1.model"
+    assert model_path.exists()
+    assert calls == [(MACE_R2SCAN_MODEL_URL, "mace-mh-1.model")]
 
 
 def test_mace_r2scan_model_download_failure_message(tmp_path, monkeypatch):

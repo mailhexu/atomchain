@@ -18,7 +18,9 @@ def _ensure_mace_r2scan_model(model_path=None):
     if os.path.exists(mace_model_file):
         return mace_model_file
 
-    os.makedirs(os.path.dirname(mace_model_file), exist_ok=True)
+    model_dir = os.path.dirname(mace_model_file)
+    if model_dir:
+        os.makedirs(model_dir, exist_ok=True)
     try:
         print(
             "MACE R2SCAN model file not found. Downloading "
@@ -36,13 +38,23 @@ def _ensure_mace_r2scan_model(model_path=None):
     return mace_model_file
 
 
-def init_calc(model_type="chgnet", model_path=None):
+def _get_torch_device(torch_module):
+    """Return the best available torch device for MACE calculators."""
+    if torch_module.cuda.is_available():
+        return "cuda"
+    mps = getattr(getattr(torch_module, "backends", None), "mps", None)
+    if mps is not None and mps.is_available():
+        return "mps"
+    return "cpu"
+
+
+def init_calc(model_type="mace", model_path=None):
     """
     Initialize calculator for calculation.
 
     param:
     =====
-    model_type: str (default: "chgnet")
+    model_type: str (default: "mace")
         Supported models: 'matgl', 'm3gnet', 'chgnet', 'deepmd', 'mace', 'xq', 'multibinit' (or 'mb')
     model_path: str (default: None).
         Path to the model file. Either a directory or a file.
@@ -55,7 +67,10 @@ def init_calc(model_type="chgnet", model_path=None):
 
     Examples:
     =========
-    # CHGNet (default)
+    # MACE (default)
+    calc = init_calc(model_type="mace")
+
+    # CHGNet
     calc = init_calc(model_type="chgnet")
 
     # MULTIBINIT with config file
@@ -91,7 +106,7 @@ def init_calc(model_type="chgnet", model_path=None):
         import torch
         from mace.calculators import mace_mp
 
-        device = "cuda" if torch.cuda.is_available() else "cpu"
+        device = _get_torch_device(torch)
         calc = mace_mp(
             model="medium", dispersion=False, default_dtype="float32", device=device
         )
@@ -100,7 +115,7 @@ def init_calc(model_type="chgnet", model_path=None):
         from mace.calculators import mace_mp
 
         mace_model_file = _ensure_mace_r2scan_model(model_path=model_path)
-        device = "cuda" if torch.cuda.is_available() else "cpu"
+        device = _get_torch_device(torch)
         calc = mace_mp(
             mace_model_file,
             device=device,

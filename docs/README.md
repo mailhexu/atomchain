@@ -32,6 +32,12 @@ uv sync --extra mace
 
 For `mace-r2scan`, AtomChain automatically downloads the MACE-MH-1 model to `~/.config/mace/mace-mh-1.model` when it is missing. If automatic download fails, manually download `https://huggingface.co/mace-foundations/mace-mh-1/resolve/main/mace-mh-1.model` and save it at that path.
 
+Materials Project access is optional. Install it with:
+
+```bash
+uv sync --extra materials-project
+```
+
 ## Quick Links
 
 - **[MULTIBINIT Tutorial](multibinit.md)** - MULTIBINIT calculator use through `pymultibinit`
@@ -60,6 +66,8 @@ AtomChain provides command-line tools for common atomistic modeling workflows:
 | `mlddb` | Write ABINIT-style DDB files | `.ddb` plus `.ddb.yaml` |
 | `mlhist` | Convert ASE trajectory and ABINIT HIST.nc | `.traj` or `HIST.nc` |
 | `mltraining` | Generate/delegate MULTIBINIT training artifacts | Trajectory, DDB, HIST, delegated output |
+| `mlmp` | Fetch structures from Materials Project | Structure files plus manifest |
+| `mlmbmodel` | Build and validate a MULTIBINIT model workflow | DDB, HIST, model files, validation plots, reports |
 
 ## Documentation by Topic
 
@@ -80,6 +88,8 @@ AtomChain provides command-line tools for common atomistic modeling workflows:
 - **[relax.md](relax.md)** - Structure optimization
 - **[phonon.md](phonon.md)** - Phonon band structures
 - **[metastable.md](metastable.md)** - Metastable state exploration from imaginary phonon modes
+- **[materials_project.md](materials_project.md)** - Materials Project structure fetching and query CLI
+- **[multibinit_workflow.md](multibinit_workflow.md)** - Full MULTIBINIT model-building workflow, reports, validation plots, and BaTiO3 example
 - **[md.md](md.md)** - Molecular dynamics (NVE, NVT, NPT)
 - **[batch.md](batch.md)** - Batch process trajectories
 - **[compare.md](compare.md)** - Compare trajectories with energy/force/stress metrics
@@ -171,6 +181,7 @@ Supported ML potential calculators:
 - ASE (Atomic Simulation Environment)
 - Phonopy 3.0.0
 - Optional calculator packages depending on the selected model: CHGNet, M3GNet/matgl, MACE (`.[mace]`), DeePMD-kit, pymultibinit, atomic_potential_xq
+- Materials Project access requires the optional `materials-project` extra and an API key via `--api-key` or `MP_API_KEY`
 
 ## Getting Help
 

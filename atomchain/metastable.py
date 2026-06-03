@@ -363,6 +363,9 @@ def _relax_candidate_with_retries(
     relaxed_relpath = os.path.join(
         "relaxed_structures", f"relaxed_{result_id:03d}.vasp"
     )
+    trajectory_relpath = os.path.join(
+        "relaxation_trajectories", f"relax_{result_id:03d}.traj"
+    )
     try:
         screened_atoms, screened_amplitude, screened_force, reductions = (
             _screen_amplitude_by_force(mod_atoms, reference_atoms, amplitude, calc)
@@ -424,8 +427,14 @@ def _relax_candidate_with_retries(
                 force_screen_reductions=last_reductions,
             )
 
-        relax_params = dict(calc=calc, sym=True, relax_cell=True, fmax=0.001)
+        relax_params = dict(
+            calc=calc,
+            sym=True,
+            relax_cell=True,
+            fmax=0.001,
+        )
         relax_params.update(relax_kwargs)
+        relax_params["traj_file"] = os.path.join(output_dir, trajectory_relpath)
         try:
             relaxed = relax_with_ml(attempt_atoms, **relax_params)
         except Exception as exc:
@@ -499,6 +508,7 @@ def _relax_candidate_with_retries(
             "n_atoms": len(relaxed),
             "initial_structure_file": initial_relpath,
             "relaxed_structure_file": relaxed_relpath,
+            "trajectory_file": trajectory_relpath,
             "structure_file": relaxed_relpath,
             "initial_atoms": attempt_atoms,
             "atoms": relaxed,
@@ -787,7 +797,7 @@ def explore_metastable_states(
     if isinstance(calc, str):
         calc = init_calc(model_type=calc, model_path=model_path)
     elif calc is None:
-        calc = init_calc(model_type="chgnet")
+        calc = init_calc(model_type="mace")
 
     if phonon_kwargs is None:
         phonon_kwargs = {}
@@ -870,8 +880,10 @@ def explore_metastable_states(
     result_id = 1
     initial_dir = os.path.join(output_dir, "initial_structures")
     relaxed_dir = os.path.join(output_dir, "relaxed_structures")
+    trajectory_dir = os.path.join(output_dir, "relaxation_trajectories")
     os.makedirs(initial_dir, exist_ok=True)
     os.makedirs(relaxed_dir, exist_ok=True)
+    os.makedirs(trajectory_dir, exist_ok=True)
     checkpoint_file = _checkpoint_filename(output_dir, checkpoint_path)
     checkpoint_metadata = _checkpoint_metadata(
         atoms,

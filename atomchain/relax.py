@@ -66,26 +66,36 @@ def relax_with_ml(
         catoms.set_constraint(FixSymmetry(catoms))
     if fix_atoms is not None:
         catoms.set_constraint(FixAtoms(indices=fix_atoms))
+    traj = Trajectory(traj_file, "w", catoms) if traj_file else None
+
+    def attach_traj(opt):
+        if traj is not None:
+            opt.attach(lambda: traj.write(catoms))
+
     if relax_cell:
         ecf = UnitCellFilter(catoms, cell_factor=cell_factor, **ucf_kwargs)
         opt = FIRE(ecf)
+        attach_traj(opt)
         opt.run(fmax=fmax * 10, steps=3500)
         first_relaxed = catoms.copy()
         first_energy = catoms.get_potential_energy()
 
         opt = BFGS(ecf)
+        attach_traj(opt)
         opt.run(fmax=fmax, steps=200)
         second_energy = catoms.get_potential_energy()
         if second_energy > first_energy:
             _restore_atoms(catoms, first_relaxed)
             ecf = UnitCellFilter(catoms, cell_factor=cell_factor, **ucf_kwargs)
             opt = FIRE(ecf)
+            attach_traj(opt)
             opt.run(fmax=fmax, steps=5000)
     else:
         opt = FIRE(catoms)
-        traj = Trajectory(traj_file, "w", catoms)
-        opt.attach(traj)
+        attach_traj(opt)
         opt.run(fmax=fmax)
+    if traj is not None:
+        traj.close()
     return catoms
 
 

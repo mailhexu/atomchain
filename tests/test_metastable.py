@@ -585,14 +585,14 @@ def test_calc_string_init(tmp_path):
     ):
         explore_metastable_states(
             atoms,
-            calc="chgnet",
+            calc="mace",
             nmax=1,
             output_dir=str(tmp_path / "metastable"),
             phonon_ndim=np.diag([2, 2, 2]),
             relax_parent=False,
         )
 
-        mock_init.assert_called_once_with(model_type="chgnet", model_path=None)
+        mock_init.assert_called_once_with(model_type="mace", model_path=None)
 
 
 def test_calc_none_init(tmp_path):
@@ -614,7 +614,7 @@ def test_calc_none_init(tmp_path):
             relax_parent=False,
         )
 
-        mock_init.assert_called_once_with(model_type="chgnet")
+        mock_init.assert_called_once_with(model_type="mace")
 
 
 def test_deduplicate_results():

@@ -46,6 +46,7 @@ class DdbStageConfig:
     include_elastic: bool = True
     include_internal_strain: bool = True
     strain_amplitude: float = 1e-3
+    difference: str = "central"
     validate_parse: bool = True
     phonon_kwargs: dict[str, Any] = field(default_factory=dict)
     validate_harmonic: bool = True
@@ -80,7 +81,7 @@ class TrainingStageConfig:
     ncoeff: int = 20
     regularization: float = 1e-8
     basis_xml: str | None = None
-    output_xml: str = "fitted.xml"
+    output_xml: str = "fitted.nc"
     binary_config: str | None = None
     executable: str | None = None
     options: dict[str, Any] = field(default_factory=dict)
@@ -159,6 +160,7 @@ class WorkflowContext:
             "stages": {},
         }
         self.reference_calculator = None
+        self.reference_stress_ha_bohr3: np.ndarray | None = None
 
     def stage_dir(self, name: str) -> Path:
         mapping = {
@@ -267,14 +269,61 @@ def run_prepare_stage(
 ) -> dict[str, Any]:
     outdir = context.output_dir
     outdir.mkdir(parents=True, exist_ok=True)
+
+    relax_parent = context.config.training.options.get("relax_parent", False)
+    if relax_parent:
+        context.parent_atoms = _relax_parent(context)
+
+    _compute_reference_stress(context)
+
     parent_path = outdir / "parent.vasp"
     config_path = outdir / "config.yaml"
     write(parent_path, context.parent_atoms, format="vasp")
     _write_yaml(_config_to_dict(context.config), config_path)
-    return {
+    outputs = {
         "parent_structure": context.relative_path(parent_path),
         "config": context.relative_path(config_path),
     }
+    if context.reference_stress_ha_bohr3 is not None:
+        outputs["reference_stress_ha_bohr3"] = (
+            context.reference_stress_ha_bohr3.tolist()
+        )
+    return outputs
+
+
+def _relax_parent(context: WorkflowContext) -> Atoms:
+    from ase.filters import UnitCellFilter
+    from ase.optimize import BFGS
+
+    calc = _reference_calculator(context)
+    atoms = context.parent_atoms.copy()
+    atoms.calc = calc
+    fmax = float(context.config.training.options.get("relax_fmax", 0.01))
+    smax_gpa = float(context.config.training.options.get("relax_smax_gpa", 0.5))
+    smax_ev_ang3 = smax_gpa / 160.21766
+    uf = UnitCellFilter(atoms)
+    opt = BFGS(uf, logfile=None)
+    for _ in range(200):
+        opt.run(fmax=fmax, steps=1)
+        stress = atoms.get_stress(voigt=True)
+        if (
+            np.max(np.abs(stress[:3])) < smax_ev_ang3
+            and np.max(np.abs(stress[3:])) < smax_ev_ang3
+        ):
+            break
+    atoms.calc = None
+    return atoms
+
+
+def _compute_reference_stress(context: WorkflowContext) -> None:
+    calc = _reference_calculator(context)
+    atoms = context.parent_atoms.copy()
+    atoms.calc = calc
+    stress_ev_ang3 = atoms.get_stress(voigt=True)
+    BOHR3_TO_ANG3 = 0.529177**3
+    HA_TO_EV = 27.211386
+    stress_ha_bohr3 = np.array(stress_ev_ang3, dtype=float) * BOHR3_TO_ANG3 / HA_TO_EV
+    context.reference_stress_ha_bohr3 = stress_ha_bohr3
 
 
 def run_ddb_stage(context: WorkflowContext, metadata: StageMetadata) -> dict[str, Any]:
@@ -292,6 +341,7 @@ def run_ddb_stage(context: WorkflowContext, metadata: StageMetadata) -> dict[str
         strain_amplitude=context.config.ddb.strain_amplitude,
         include_stress=context.config.ddb.include_elastic,
         include_strain_phonon=context.config.ddb.include_internal_strain,
+        difference=context.config.ddb.difference,
         cache_dir=ddb_dir / "fd_cache",
         phonon_kwargs={"parallel": False, **context.config.ddb.phonon_kwargs},
     )
@@ -1914,6 +1964,7 @@ def _model_calculator_from_training(context: WorkflowContext):
                 dipdip=_bool_option(context.config.training.options, "dipdip", True),
                 asr=_bool_option(context.config.training.options, "asr", False),
                 auto_match_atoms=False,
+                reference_stress_ha_bohr3=context.reference_stress_ha_bohr3,
             )
             return MultibinitCalculator(potential=potential)
     model_config = train_outputs.get("model_config")
@@ -1988,10 +2039,9 @@ def _basis_xml(context: WorkflowContext, model_dir: Path) -> Path:
         return path if path.is_absolute() else context.output_dir / path
 
     from pymultibinit.training import (
-        displacement_pair_diagnostics,
-        generate_displacement_basis,
+        generate_fortran_anchored_basis,
         with_fortran_text_labels,
-        write_fitted_xml,
+        write_basis_netcdf,
     )
 
     options = context.config.training.options
@@ -1999,58 +2049,49 @@ def _basis_xml(context: WorkflowContext, model_dir: Path) -> Path:
     basis_ncell = _basis_ncell(context)
     fingerprint = _basis_request_fingerprint(context, cutoff, basis_ncell, options)
     diagnostics_path = model_dir / "basis_pair_diagnostics.json"
-    basis_path = model_dir / "basis.xml"
-    if basis_path.exists() and diagnostics_path.exists():
-        try:
-            previous = json.loads(diagnostics_path.read_text(encoding="utf-8"))
-        except Exception:
-            previous = None
-        if _basis_pair_diagnostics_satisfy_request(
-            previous, cutoff, basis_ncell, options, fingerprint
-        ):
-            return basis_path
+    basis_path = model_dir / "basis.nc"
+    legacy_xml = model_dir / "basis.xml"
+    for candidate in (basis_path, legacy_xml):
+        if candidate.exists() and diagnostics_path.exists():
+            try:
+                previous = json.loads(diagnostics_path.read_text(encoding="utf-8"))
+            except Exception:
+                previous = None
+            if (
+                isinstance(previous, dict)
+                and previous.get("basis_request_fingerprint") == fingerprint
+            ):
+                return candidate
 
-    symrel, atom_mappings = _basis_symmetry(context)
-    diagnostics = displacement_pair_diagnostics(
-        context.parent_atoms.get_positions(),
+    symrel, tnons, _atom_mappings = _basis_symmetry(context)
+    atoms = context.parent_atoms
+    include_strain_coupling = _bool_option(options, "include_strain_coupling", False)
+    max_nbody = options.get("max_nbody")
+    if max_nbody is not None:
+        max_nbody = int(max_nbody)
+    basis = generate_fortran_anchored_basis(
+        xcart=atoms.get_positions(),
+        xred=atoms.get_scaled_positions(wrap=True),
         cutoff=cutoff,
-        ncell=basis_ncell,
         symrel=symrel,
-        atom_mappings=atom_mappings,
-        rprimd=context.parent_atoms.cell.array,
-    )
-    diagnostics["basis_request_fingerprint"] = fingerprint
-    if basis_path.exists() and diagnostics_path.exists():
-        try:
-            previous = json.loads(diagnostics_path.read_text(encoding="utf-8"))
-        except Exception:
-            previous = None
-        if _basis_pair_diagnostics_match(
-            previous, diagnostics
-        ) and _basis_pair_diagnostics_satisfy_request(
-            previous, cutoff, basis_ncell, options, fingerprint
-        ):
-            return basis_path
-    _write_json(diagnostics, diagnostics_path)
-    if bool(options.get("require_basis_symmetry_closed", True)) and not diagnostics.get(
-        "symmetry_closed", False
-    ):
-        raise ValueError(
-            "Generated displacement pair set is not closed under the selected symmetry operations; "
-            f"see {model_dir / 'basis_pair_diagnostics.json'}"
-        )
-    basis = generate_displacement_basis(
-        context.parent_atoms.get_positions(),
-        cutoff=cutoff,
+        ncell=(1, 1, 1),
+        rprimd=atoms.cell.array,
+        tnons=tnons,
         power_range=tuple(options.get("power_range", (3, 4))),
-        ncell=basis_ncell,
-        symrel=symrel,
-        atom_mappings=atom_mappings,
-        rprimd=context.parent_atoms.cell.array,
-        include_strain_coupling=bool(options.get("include_strain_coupling", True)),
+        include_strain_coupling=include_strain_coupling,
+        max_nbody=max_nbody,
     )
-    basis = with_fortran_text_labels(basis, context.parent_atoms.get_chemical_symbols())
-    write_fitted_xml(basis_path, basis)
+    basis = with_fortran_text_labels(basis, atoms.get_chemical_symbols())
+    write_basis_netcdf(basis_path, basis)
+    if legacy_xml.exists():
+        legacy_xml.unlink()
+    diagnostics = {
+        "basis_request_fingerprint": fingerprint,
+        "ncell": [1, 1, 1],
+        "cutoff": cutoff,
+        "ncoeff": len(basis),
+    }
+    _write_json(diagnostics, diagnostics_path)
     return basis_path
 
 
@@ -2091,6 +2132,7 @@ def _basis_request_fingerprint(
 ) -> str:
     atoms = context.parent_atoms
     payload = {
+        "generator": "fortran_anchored_v1",
         "numbers": [int(item) for item in atoms.get_atomic_numbers()],
         "cell": _rounded_nested(atoms.cell.array),
         "positions": _rounded_nested(atoms.get_positions()),
@@ -2098,9 +2140,10 @@ def _basis_request_fingerprint(
         "cutoff": float(cutoff),
         "basis_ncell": list(basis_ncell),
         "power_range": [int(item) for item in options.get("power_range", (3, 4))],
-        "include_strain_coupling": bool(options.get("include_strain_coupling", True)),
         "use_symmetry": bool(options.get("use_symmetry", True)),
         "symprec": float(options.get("symprec", 1e-5)),
+        "include_strain_coupling": bool(options.get("include_strain_coupling", False)),
+        "max_nbody": options.get("max_nbody"),
     }
     text = json.dumps(payload, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
@@ -2150,14 +2193,14 @@ def _basis_cutoff(context: WorkflowContext) -> float:
 def _basis_symmetry(context: WorkflowContext):
     options = context.config.training.options
     if not bool(options.get("use_symmetry", True)):
-        return None, None
+        return None, None, None
     try:
         from pymultibinit.pyeffpot.symmetry import (
             build_atom_mapping,
             get_symmetry_from_crystal,
         )
     except Exception:
-        return None, None
+        return None, None, None
     numbers = np.asarray(context.parent_atoms.get_atomic_numbers(), dtype=int)
     symrel, tnons = get_symmetry_from_crystal(
         context.parent_atoms.cell.array,
@@ -2171,7 +2214,7 @@ def _basis_symmetry(context: WorkflowContext):
         tnons,
         tol=float(options.get("symprec", 1e-5)),
     )
-    return symrel, atom_mappings
+    return symrel, tnons, atom_mappings
 
 
 def _python_fit_kwargs(context: WorkflowContext) -> dict[str, Any]:
@@ -2202,6 +2245,7 @@ def _python_fixed_model(context: WorkflowContext, ddb: Path):
         ncell=_training_ncell(context),
         dipdip=_bool_option(options, "dipdip", True),
         asr=_bool_option(options, "asr", False),
+        reference_stress=context.reference_stress_ha_bohr3,
     )
 
 
@@ -2450,6 +2494,7 @@ def _write_ddb_harmonic_validation(
             dipdip=_bool_option(context.config.training.options, "dipdip", True),
             asr=_bool_option(context.config.training.options, "asr", False),
             auto_match_atoms=False,
+            reference_stress_ha_bohr3=context.reference_stress_ha_bohr3,
         )
         ddb_calc = MultibinitCalculator(potential=potential)
         frames = _tiny_harmonic_validation_frames(context)

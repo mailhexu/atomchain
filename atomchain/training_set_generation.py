@@ -53,6 +53,8 @@ class MetastableInterpolationConfig:
     split: Split = "train"
     source: str = "metastable_interpolation"
     skip_incompatible: bool = True
+    rattle_stdev: float = 0.0
+    rattle_per_metastable: int = 0
 
 
 @dataclass
@@ -148,30 +150,67 @@ def generate_metastable_interpolation_frames(
         elif not cfg.skip_incompatible:
             raise ValueError("metastable structure atom count differs from parent")
     if count is not None:
-        return _generate_counted_metastable_interpolation(
+        frames = _generate_counted_metastable_interpolation(
             context, cfg, compatible, lambdas, count
         )
+    else:
+        frames = []
+        for imeta, (metastable_id, atoms) in enumerate(compatible):
+            parent_scaled = parent.get_scaled_positions(wrap=False)
+            meta_scaled = atoms.get_scaled_positions(wrap=False)
+            delta_scaled = meta_scaled - parent_scaled
+            delta_scaled -= np.round(delta_scaled)
+            parent_cell = parent.cell.array
+            meta_cell = atoms.cell.array
+            for ilambda, lambda_value in enumerate(lambdas):
+                item = parent.copy()
+                item.set_cell(
+                    parent_cell + lambda_value * (meta_cell - parent_cell),
+                    scale_atoms=False,
+                )
+                item.set_scaled_positions(parent_scaled + lambda_value * delta_scaled)
+                frame_id = f"{cfg.source}-{imeta:04d}-{ilambda:04d}"
+                metadata = {
+                    "metastable_id": metastable_id,
+                    "lambda": lambda_value,
+                    "lambda_index": ilambda,
+                    "interpolation_mode": "minimum_image_scaled",
+                }
+                _attach_info(item, cfg.source, frame_id, cfg.split, metadata)
+                frames.append(
+                    GeneratedFrame(item, cfg.source, frame_id, cfg.split, metadata)
+                )
+
+    if cfg.rattle_stdev > 0 and cfg.rattle_per_metastable > 0 and compatible:
+        frames.extend(_generate_metastable_rattle(context, cfg, compatible))
+
+    return frames
+
+
+def _generate_metastable_rattle(
+    context: SamplingContext,
+    cfg: MetastableInterpolationConfig,
+    metastable: Sequence[tuple[Any, Atoms]],
+) -> list[GeneratedFrame]:
+    parent = context.parent_atoms
+    parent_scaled = parent.get_scaled_positions(wrap=False)
+    parent_cell = parent.cell.array
+    rng = np.random.default_rng(context.seed + 7919)
     frames = []
-    for imeta, (metastable_id, atoms) in enumerate(compatible):
-        parent_scaled = parent.get_scaled_positions(wrap=False)
+    for imeta, (metastable_id, atoms) in enumerate(metastable):
         meta_scaled = atoms.get_scaled_positions(wrap=False)
         delta_scaled = meta_scaled - parent_scaled
         delta_scaled -= np.round(delta_scaled)
-        parent_cell = parent.cell.array
-        meta_cell = atoms.cell.array
-        for ilambda, lambda_value in enumerate(lambdas):
+        for j in range(cfg.rattle_per_metastable):
             item = parent.copy()
-            item.set_cell(
-                parent_cell + lambda_value * (meta_cell - parent_cell),
-                scale_atoms=False,
-            )
-            item.set_scaled_positions(parent_scaled + lambda_value * delta_scaled)
-            frame_id = f"{cfg.source}-{imeta:04d}-{ilambda:04d}"
+            item.set_cell(parent_cell, scale_atoms=False)
+            noise = rng.normal(0.0, cfg.rattle_stdev, parent_scaled.shape)
+            item.set_scaled_positions(parent_scaled + delta_scaled + noise)
+            frame_id = f"{cfg.source}-rattle-{imeta:04d}-{j:04d}"
             metadata = {
                 "metastable_id": metastable_id,
-                "lambda": lambda_value,
-                "lambda_index": ilambda,
-                "interpolation_mode": "minimum_image_scaled",
+                "rattle_stdev": cfg.rattle_stdev,
+                "rattle_index": j,
             }
             _attach_info(item, cfg.source, frame_id, cfg.split, metadata)
             frames.append(

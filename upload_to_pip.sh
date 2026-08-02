@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
+set -eu
+
 rm -rf ./dist/*
-#python3 setup.py sdist bdist_wheel
-#python -m build
 uv build
-uv run python -m twine upload --repository pypi dist/* --verbose
+uv run --with twine python -m twine upload --repository pypi dist/* --verbose

@@ -1,6 +1,6 @@
 [project]
 name = "atomchain"
-version = "0.2.2"
+version = "0.3.2"
 description = "A library to chain the atomic models with applications"
 authors = [
     {name = "Xu He", email = "mailhexu@gmail.com"},
@@ -64,6 +64,23 @@ mlmbmodel = "atomchain.multibinit_workflow:mlmbmodel_cli"
 [build-system]
 requires = ["hatchling>=1.12.0"]
 build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.sdist]
+exclude = [
+    "/examples",
+    "/.opencode",
+    "/.omo",
+    "/.serena",
+    "/.venv",
+    "/.pytest_cache",
+    "/.ruff_cache",
+    "/build",
+    "/dist",
+    "/node_modules",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["atomchain"]
 
 
 

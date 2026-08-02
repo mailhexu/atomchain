@@ -1,10 +1,11 @@
 doc/refs/*.pdf
+examples
 
 phonon_save
 
 *.swp
 
-# Latex 
+# Latex
 *.aux
 
 # xyz files

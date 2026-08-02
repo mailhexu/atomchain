@@ -46,6 +46,12 @@ def build_parser():
         help="Central finite-difference strain amplitude",
     )
     parser.add_argument(
+        "--difference",
+        choices=["central", "central5"],
+        default="central",
+        help="Finite-difference scheme: 'central' (3-point) or 'central5' (5-point)",
+    )
+    parser.add_argument(
         "--phonon-ndim",
         nargs=3,
         type=int,
@@ -90,6 +96,7 @@ def mlddb_cli(argv=None):
             strain_amplitude=args.strain_amplitude,
             include_stress=args.include_stress,
             include_strain_phonon=args.include_strain_phonon,
+            difference=args.difference,
             cache_dir=args.cache,
         )
     if args.validate:

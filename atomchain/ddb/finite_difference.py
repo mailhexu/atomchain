@@ -44,8 +44,18 @@ def strain_atoms(atoms, voigt_index, amplitude):
     return strained
 
 
-def calculate_stress_response(atoms, calc, strain_amplitude=1e-3, cache_dir=None):
-    """Compute central-difference stress response d(stress)/d(strain)."""
+def calculate_stress_response(
+    atoms, calc, strain_amplitude=1e-3, cache_dir=None, difference="central"
+):
+    """Compute stress response d(stress)/d(strain) via finite differences.
+
+    Parameters
+    ----------
+    difference : str
+        ``"central"`` uses 3-point central difference (2 evaluations per component).
+        ``"central5"`` uses 5-point central difference (4 evaluations per component,
+        O(h^4) accuracy).
+    """
     responses = np.zeros((6, 6), dtype=float)
     cache = Path(cache_dir) if cache_dir is not None else None
     if cache is not None:
@@ -58,35 +68,68 @@ def calculate_stress_response(atoms, calc, strain_amplitude=1e-3, cache_dir=None
                 )
 
     for idx in range(6):
-        plus = strain_atoms(atoms, idx, strain_amplitude)
-        minus = strain_atoms(atoms, idx, -strain_amplitude)
-        plus.calc = calc
-        minus.calc = calc
-        try:
-            splus = tensor_to_voigt(plus.get_stress(voigt=False), strain=False)
-            sminus = tensor_to_voigt(minus.get_stress(voigt=False), strain=False)
-        except Exception as exc:
-            raise RuntimeError(
-                "Calculator does not provide usable stress for finite differences"
-            ) from exc
-        responses[:, idx] = (splus - sminus) / (2.0 * strain_amplitude)
+        if difference == "central5":
+            # 5-point central: (-f(+2h) + 8f(+h) - 8f(-h) + f(-2h)) / (12h)
+            h = strain_amplitude
+            atoms_p2 = strain_atoms(atoms, idx, 2 * h)
+            atoms_p1 = strain_atoms(atoms, idx, h)
+            atoms_m1 = strain_atoms(atoms, idx, -h)
+            atoms_m2 = strain_atoms(atoms, idx, -2 * h)
+            for a in (atoms_p2, atoms_p1, atoms_m1, atoms_m2):
+                a.calc = calc
+            try:
+                s_p2 = tensor_to_voigt(atoms_p2.get_stress(voigt=False), strain=False)
+                s_p1 = tensor_to_voigt(atoms_p1.get_stress(voigt=False), strain=False)
+                s_m1 = tensor_to_voigt(atoms_m1.get_stress(voigt=False), strain=False)
+                s_m2 = tensor_to_voigt(atoms_m2.get_stress(voigt=False), strain=False)
+            except Exception as exc:
+                raise RuntimeError(
+                    "Calculator does not provide usable stress for finite differences"
+                ) from exc
+            responses[:, idx] = (-s_p2 + 8 * s_p1 - 8 * s_m1 + s_m2) / (12.0 * h)
+        else:
+            # 3-point central: (f(+h) - f(-h)) / (2h)
+            plus = strain_atoms(atoms, idx, strain_amplitude)
+            minus = strain_atoms(atoms, idx, -strain_amplitude)
+            plus.calc = calc
+            minus.calc = calc
+            try:
+                splus = tensor_to_voigt(plus.get_stress(voigt=False), strain=False)
+                sminus = tensor_to_voigt(minus.get_stress(voigt=False), strain=False)
+            except Exception as exc:
+                raise RuntimeError(
+                    "Calculator does not provide usable stress for finite differences"
+                ) from exc
+            responses[:, idx] = (splus - sminus) / (2.0 * strain_amplitude)
 
     if cache is not None:
         with (cache / "stress_response.yaml").open("w", encoding="utf-8") as handle:
             yaml.safe_dump(
-                {"stress_response_ev_ang3": responses.tolist()}, handle, sort_keys=True
+                {
+                    "stress_response_ev_ang3": responses.tolist(),
+                    "difference": difference,
+                },
+                handle,
+                sort_keys=True,
             )
     return responses
 
 
 def calculate_internal_strain_response(
-    atoms, calc, strain_amplitude=1e-3, cache_dir=None
+    atoms, calc, strain_amplitude=1e-3, cache_dir=None, difference="central"
 ):
     """Compute Gamma force-response internal strain dF/d(strain).
 
     The returned array has shape ``(natom, 3, 6)`` in eV/Angstrom. ABINIT stores
     the corresponding second derivative with the opposite sign, because
     ``m_ddb_internalstr.F90`` defines ``instrain = -blkval``.
+
+    Parameters
+    ----------
+    difference : str
+        ``"central"`` uses 3-point central difference (2 evaluations per component).
+        ``"central5"`` uses 5-point central difference (4 evaluations per component,
+        O(h^4) accuracy).
     """
     cache = Path(cache_dir) if cache_dir is not None else None
     if cache is not None:
@@ -101,25 +144,47 @@ def calculate_internal_strain_response(
 
     response = np.zeros((len(atoms), 3, 6), dtype=float)
     for idx in range(6):
-        plus = strain_atoms(atoms, idx, strain_amplitude)
-        minus = strain_atoms(atoms, idx, -strain_amplitude)
-        plus.calc = calc
-        minus.calc = calc
-        try:
-            fplus = np.asarray(plus.get_forces(), dtype=float)
-            fminus = np.asarray(minus.get_forces(), dtype=float)
-        except Exception as exc:
-            raise RuntimeError(
-                "Calculator does not provide usable forces for internal-strain finite differences"
-            ) from exc
-        response[:, :, idx] = (fplus - fminus) / (2.0 * strain_amplitude)
+        if difference == "central5":
+            h = strain_amplitude
+            atoms_p2 = strain_atoms(atoms, idx, 2 * h)
+            atoms_p1 = strain_atoms(atoms, idx, h)
+            atoms_m1 = strain_atoms(atoms, idx, -h)
+            atoms_m2 = strain_atoms(atoms, idx, -2 * h)
+            for a in (atoms_p2, atoms_p1, atoms_m1, atoms_m2):
+                a.calc = calc
+            try:
+                f_p2 = np.asarray(atoms_p2.get_forces(), dtype=float)
+                f_p1 = np.asarray(atoms_p1.get_forces(), dtype=float)
+                f_m1 = np.asarray(atoms_m1.get_forces(), dtype=float)
+                f_m2 = np.asarray(atoms_m2.get_forces(), dtype=float)
+            except Exception as exc:
+                raise RuntimeError(
+                    "Calculator does not provide usable forces for internal strain finite differences"
+                ) from exc
+            response[:, :, idx] = (-f_p2 + 8 * f_p1 - 8 * f_m1 + f_m2) / (12.0 * h)
+        else:
+            plus = strain_atoms(atoms, idx, strain_amplitude)
+            minus = strain_atoms(atoms, idx, -strain_amplitude)
+            plus.calc = calc
+            minus.calc = calc
+            try:
+                fplus = np.asarray(plus.get_forces(), dtype=float)
+                fminus = np.asarray(minus.get_forces(), dtype=float)
+            except Exception as exc:
+                raise RuntimeError(
+                    "Calculator does not provide usable forces for internal strain finite differences"
+                ) from exc
+            response[:, :, idx] = (fplus - fminus) / (2.0 * strain_amplitude)
 
     if cache is not None:
         with (cache / "internal_strain_response.yaml").open(
             "w", encoding="utf-8"
         ) as handle:
             yaml.safe_dump(
-                {"internal_strain_response_ev_ang": response.tolist()},
+                {
+                    "internal_strain_response_ev_ang": response.tolist(),
+                    "difference": difference,
+                },
                 handle,
                 sort_keys=True,
             )
@@ -240,8 +305,8 @@ def write_ddb_from_finite_difference(
     symprec=1e-5,
 ):
     """Compute requested finite-difference response terms and write a DDB."""
-    if difference != "central":
-        raise ValueError("Only central differences are supported")
+    if difference not in ("central", "central5"):
+        raise ValueError("Only 'central' and 'central5' differences are supported")
     cache = Path(cache_dir)
     cache.mkdir(parents=True, exist_ok=True)
     phonon_kwargs = dict(phonon_kwargs or {})
@@ -264,6 +329,7 @@ def write_ddb_from_finite_difference(
             "source": "finite_difference",
             "cache_dir": str(cache),
             "strain_amplitude": strain_amplitude,
+            "difference": difference,
             "include_stress": include_stress,
             "include_internal_strain": include_strain_phonon,
             "finite_q_strain_phonon_written": False,
@@ -273,14 +339,22 @@ def write_ddb_from_finite_difference(
 
     if include_stress:
         response = calculate_stress_response(
-            atoms, calc, strain_amplitude=strain_amplitude, cache_dir=cache
+            atoms,
+            calc,
+            strain_amplitude=strain_amplitude,
+            cache_dir=cache,
+            difference=difference,
         )
         for block in build_elastic_blocks(atoms, response):
             document.add_derivative(block)
 
     if include_strain_phonon:
         response = calculate_internal_strain_response(
-            atoms, calc, strain_amplitude=strain_amplitude, cache_dir=cache
+            atoms,
+            calc,
+            strain_amplitude=strain_amplitude,
+            cache_dir=cache,
+            difference=difference,
         )
         for block in build_internal_strain_blocks(response):
             document.add_derivative(block)

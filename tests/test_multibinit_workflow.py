@@ -819,7 +819,7 @@ def test_basis_xml_reuses_only_matching_fingerprint(tmp_path, monkeypatch):
         parent,
     )
     model_dir = context.stage_dir("model")
-    basis = model_dir / "basis.xml"
+    basis = model_dir / "basis.nc"
     diagnostics = model_dir / "basis_pair_diagnostics.json"
     basis.write_text("existing", encoding="utf-8")
     cutoff = mw._basis_cutoff(context)
@@ -830,38 +830,24 @@ def test_basis_xml_reuses_only_matching_fingerprint(tmp_path, monkeypatch):
     diagnostics.write_text(
         json.dumps(
             {
+                "basis_request_fingerprint": fingerprint,
                 "ncell": [1, 1, 1],
                 "cutoff": cutoff,
-                "n_factors": 1,
-                "n_symmetry_operations": 1,
-                "symmetry_closed": True,
-                "missing_mapped_factors_count": 0,
-                "max_pair_distance": 1.0,
-                "basis_request_fingerprint": fingerprint,
+                "ncoeff": 0,
             }
         ),
         encoding="utf-8",
     )
     calls = []
     training_mod = types.ModuleType("pymultibinit.training")
-    training_mod.displacement_pair_diagnostics = lambda *args, **kwargs: calls.append(
-        "diagnostics"
-    ) or {
-        "ncell": [1, 1, 1],
-        "cutoff": cutoff,
-        "n_factors": 1,
-        "n_symmetry_operations": 1,
-        "symmetry_closed": True,
-        "missing_mapped_factors_count": 0,
-        "max_pair_distance": 1.0,
-    }
-    training_mod.generate_displacement_basis = (
+    training_mod.generate_fortran_anchored_basis = (
         lambda *args, **kwargs: calls.append("generate") or []
     )
     training_mod.with_fortran_text_labels = lambda basis, symbols: basis
-    training_mod.write_fitted_xml = lambda path, basis: calls.append(
+    training_mod.write_basis_netcdf = lambda path, basis: calls.append(
         "write"
     ) or path.write_text("new", encoding="utf-8")
+    training_mod.load_basis = lambda *args, **kwargs: []
     monkeypatch.setitem(sys.modules, "pymultibinit.training", training_mod)
 
     assert mw._basis_xml(context, model_dir) == basis
@@ -869,10 +855,10 @@ def test_basis_xml_reuses_only_matching_fingerprint(tmp_path, monkeypatch):
 
     context.config.training.options["power_range"] = [2, 2]
     assert mw._basis_xml(context, model_dir) == basis
-    assert calls == ["diagnostics", "generate", "write"]
+    assert calls == ["generate", "write"]
 
 
-def test_basis_xml_recomputed_nonclosed_diagnostics_still_raise(tmp_path, monkeypatch):
+def test_basis_xml_regenerates_on_fingerprint_mismatch(tmp_path, monkeypatch):
     parent = bulk("Al")
     context = mw.WorkflowContext(
         mw.WorkflowConfig(
@@ -881,42 +867,35 @@ def test_basis_xml_recomputed_nonclosed_diagnostics_still_raise(tmp_path, monkey
             training=mw.TrainingStageConfig(
                 options={
                     "basis_ncell": [1, 1, 1],
-                    "use_symmetry": True,
-                    "require_basis_symmetry_closed": True,
+                    "use_symmetry": False,
                 }
             ),
         ),
         parent,
     )
     model_dir = context.stage_dir("model")
-    basis = model_dir / "basis.xml"
+    basis = model_dir / "basis.nc"
     diagnostics = model_dir / "basis_pair_diagnostics.json"
-    basis.write_text("existing", encoding="utf-8")
-    cutoff = mw._basis_cutoff(context)
-    ncell = mw._basis_ncell(context)
-    fingerprint = mw._basis_request_fingerprint(
-        context, cutoff, ncell, context.config.training.options
+    basis.write_text("old", encoding="utf-8")
+    diagnostics.write_text(
+        json.dumps({"basis_request_fingerprint": "stale", "ncell": [1, 1, 1]}),
+        encoding="utf-8",
     )
-    nonclosed = {
-        "ncell": [1, 1, 1],
-        "cutoff": cutoff,
-        "n_factors": 1,
-        "n_symmetry_operations": 1,
-        "symmetry_closed": False,
-        "missing_mapped_factors_count": 1,
-        "max_pair_distance": 1.0,
-        "basis_request_fingerprint": fingerprint,
-    }
-    diagnostics.write_text(json.dumps(nonclosed), encoding="utf-8")
+    calls = []
     training_mod = types.ModuleType("pymultibinit.training")
-    training_mod.displacement_pair_diagnostics = lambda *args, **kwargs: dict(nonclosed)
-    training_mod.generate_displacement_basis = lambda *args, **kwargs: []
+    training_mod.generate_fortran_anchored_basis = (
+        lambda *args, **kwargs: calls.append("generate") or []
+    )
     training_mod.with_fortran_text_labels = lambda basis, symbols: basis
-    training_mod.write_fitted_xml = lambda path, basis: None
+    training_mod.write_basis_netcdf = lambda path, basis: calls.append(
+        "write"
+    ) or path.write_text("new", encoding="utf-8")
+    training_mod.load_basis = lambda *args, **kwargs: []
     monkeypatch.setitem(sys.modules, "pymultibinit.training", training_mod)
 
-    with pytest.raises(ValueError, match="not closed"):
-        mw._basis_xml(context, model_dir)
+    mw._basis_xml(context, model_dir)
+    assert "generate" in calls
+    assert "write" in calls
 
 
 def test_sensitive_config_values_are_redacted_from_artifacts():

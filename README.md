@@ -21,6 +21,7 @@ AtomChain includes several command-line tools for common atomistic workflows:
 - **`mlddb`** - Write ABINIT-style DDB files from phonopy and ML finite-difference workflows
 - **`mlhist`** - Convert between ABINIT HIST.nc and ASE trajectory files
 - **`mltraining`** - Generate MULTIBINIT training trajectories/artifacts and delegate training to pymultibinit
+- **`mlbvmodel`** - Build and validate bond-valence parameter models from ML-potential-sampled structures (`easybondvalence`)
 
 ## Installation
 
@@ -204,7 +205,7 @@ loaded_frames = read_abinit_hist("training_HIST.nc")
 - Python 3.10+
 - ASE (Atomic Simulation Environment)
 - Phonopy 3.0.0
-- Optional: CHGNet, M3GNet, matgl, MACE (`pip install -e '.[mace]'`), DeePMD-kit, atomic_potential_xq, and pymultibinit depending on selected calculator/workflow
+- Optional: CHGNet, M3GNet, matgl, MACE (`pip install -e '.[mace]'`), easybondvalence (`pip install -e '.[bondvalence]'`), DeePMD-kit, atomic_potential_xq, and pymultibinit depending on selected calculator/workflow
 
 ## License
 

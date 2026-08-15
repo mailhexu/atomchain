@@ -60,6 +60,7 @@ mlhist = "atomchain.training.cli:mlhist_cli"
 mltraining = "atomchain.training.cli:mltraining_cli"
 mlmp = "atomchain.materials_project:mlmp_cli"
 mlmbmodel = "atomchain.multibinit_workflow:mlmbmodel_cli"
+mlbvmodel = "atomchain.bondvalence_workflow:mlbvmodel_cli"
 
 [build-system]
 requires = ["hatchling>=1.12.0"]
@@ -105,6 +106,9 @@ mace=[
 
 materials-project=[
     "mp-api",
+]
+bondvalence=[
+    "easybondvalence",
 ]
 
 [tool.pytest.ini_options]

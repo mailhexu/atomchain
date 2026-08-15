@@ -90,6 +90,7 @@ AtomChain provides command-line tools for common atomistic modeling workflows:
 - **[metastable.md](metastable.md)** - Metastable state exploration from imaginary phonon modes
 - **[materials_project.md](materials_project.md)** - Materials Project structure fetching and query CLI
 - **[multibinit_workflow.md](multibinit_workflow.md)** - Full MULTIBINIT model-building workflow, reports, validation plots, and BaTiO3 example
+- **[bondvalence_workflow.md](bondvalence_workflow.md)** - Bond-valence parameter workflow (`mlbvmodel`): MACE sampling, R0/b fit, GII validation, reports
 - **[md.md](md.md)** - Molecular dynamics (NVE, NVT, NPT)
 - **[batch.md](batch.md)** - Batch process trajectories
 - **[compare.md](compare.md)** - Compare trajectories with energy/force/stress metrics

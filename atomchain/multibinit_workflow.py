@@ -26,6 +26,13 @@ from atomchain.training.validation import (
     validate_metastable_energy_differences,
 )
 
+try:
+    from pymultibinit.training import FORTRAN_ANCHORED_GENERATOR_TAG
+except (ImportError, AttributeError):
+    # Older optional pymultibinit installations do not expose the provenance tag.
+    FORTRAN_ANCHORED_GENERATOR_TAG = "fortran_anchored_v2"
+
+
 STAGE_ORDER = [
     "prepare",
     "ddb",
@@ -36,7 +43,7 @@ STAGE_ORDER = [
     "validate",
     "report",
 ]
-STAGE_SIGNATURE_VERSIONS = {"train": 3, "validate": 3}
+STAGE_SIGNATURE_VERSIONS = {"train": 5, "validate": 5}
 
 
 @dataclass
@@ -211,6 +218,7 @@ def run_model_build_workflow(
         return _result_from_context(context, passed=None)
 
     context.output_dir.mkdir(parents=True, exist_ok=True)
+    _restore_prepare_state(context)
     stage_map = _default_stage_functions()
     stage_map.update(stage_functions or {})
     forced = set(force_stage or [])
@@ -289,6 +297,34 @@ def run_prepare_stage(
             context.reference_stress_ha_bohr3.tolist()
         )
     return outputs
+
+
+def _restore_prepare_state(context: WorkflowContext) -> None:
+    """Restore relaxed parent and reference stress from a cached prepare stage.
+
+    Stage reuse returns cached metadata without re-executing prepare, so a fresh
+    process would otherwise carry the unrelaxed input structure and a missing
+    reference stress into downstream stages (basis anchoring, stress validation).
+    """
+    checkpoint = context.checkpoint_dir("prepare") / "stage.yaml"
+    if not checkpoint.exists():
+        return
+    try:
+        previous = yaml.safe_load(checkpoint.read_text(encoding="utf-8")) or {}
+    except Exception:
+        return
+    if previous.get("status") not in ("completed", "reused"):
+        return
+    outputs = previous.get("outputs") or {}
+    parent_path = context.path_from_manifest(outputs.get("parent_structure"))
+    if parent_path is not None and parent_path.exists():
+        try:
+            context.parent_atoms = read(parent_path)
+        except Exception:
+            return
+    refstress = outputs.get("reference_stress_ha_bohr3")
+    if refstress is not None:
+        context.reference_stress_ha_bohr3 = np.array(refstress, dtype=float)
 
 
 def _relax_parent(context: WorkflowContext) -> Atoms:
@@ -528,7 +564,7 @@ def run_training_stage(
 
         output_xml = model_dir / context.config.training.output_xml
         fit_config = _python_fit_config(context)
-        basis_xml = _basis_xml(context, model_dir)
+        basis_xml = _basis_xml(context, model_dir, fit_config=fit_config)
         kwargs = _python_fit_kwargs(context)
         kwargs.setdefault("fixed_model", _python_fixed_model(context, ddb))
         raw = fit_multibinit_model_python(
@@ -2016,6 +2052,7 @@ def _python_fit_config(context: WorkflowContext):
     selection = options.get(
         "selection", "greedy" if context.config.training.ncoeff is not None else "all"
     )
+    include_pure_strain, max_strain_power = _pure_strain_options(options)
     return PythonFitConfig(
         ncell=_training_ncell(context),
         fit_on=tuple(options.get("fit_on", (True, True, True))),
@@ -2030,10 +2067,28 @@ def _python_fit_config(context: WorkflowContext):
         candidate_pool_size=options.get("candidate_pool_size"),
         feature_chunk_size=int(options.get("feature_chunk_size", 512)),
         screening_frame_count=options.get("screening_frame_count"),
+        min_pure_strain_ratio=_min_pure_strain_ratio(options, selection),
+        include_pure_strain=include_pure_strain,
+        max_strain_power=max_strain_power,
     )
 
 
-def _basis_xml(context: WorkflowContext, model_dir: Path) -> Path:
+def _pure_strain_options(options: Mapping[str, Any]) -> tuple[bool, int]:
+    return (
+        _bool_option(options, "include_pure_strain", True),
+        int(options.get("max_strain_power", 4)),
+    )
+
+
+def _min_pure_strain_ratio(options: Mapping[str, Any], selection: str) -> float:
+    if "min_pure_strain_ratio" in options:
+        return float(options["min_pure_strain_ratio"])
+    return 0.05 if selection in ("greedy", "screened_greedy") else 0.0
+
+
+def _basis_xml(
+    context: WorkflowContext, model_dir: Path, fit_config: Any | None = None
+) -> Path:
     if context.config.training.basis_xml is not None:
         path = Path(context.config.training.basis_xml)
         return path if path.is_absolute() else context.output_dir / path
@@ -2047,7 +2102,18 @@ def _basis_xml(context: WorkflowContext, model_dir: Path) -> Path:
     options = context.config.training.options
     cutoff = _basis_cutoff(context)
     basis_ncell = _basis_ncell(context)
-    fingerprint = _basis_request_fingerprint(context, cutoff, basis_ncell, options)
+    include_pure_strain, max_strain_power = (
+        _pure_strain_options(options)
+        if fit_config is None
+        else (fit_config.include_pure_strain, fit_config.max_strain_power)
+    )
+    fingerprint = _basis_request_fingerprint(
+        context,
+        cutoff,
+        basis_ncell,
+        options,
+        pure_strain_options=(include_pure_strain, max_strain_power),
+    )
     diagnostics_path = model_dir / "basis_pair_diagnostics.json"
     basis_path = model_dir / "basis.nc"
     legacy_xml = model_dir / "basis.xml"
@@ -2074,21 +2140,29 @@ def _basis_xml(context: WorkflowContext, model_dir: Path) -> Path:
         xred=atoms.get_scaled_positions(wrap=True),
         cutoff=cutoff,
         symrel=symrel,
-        ncell=(1, 1, 1),
+        ncell=basis_ncell,
         rprimd=atoms.cell.array,
         tnons=tnons,
         power_range=tuple(options.get("power_range", (3, 4))),
         include_strain_coupling=include_strain_coupling,
+        include_pure_strain=include_pure_strain,
+        max_strain_power=max_strain_power,
         max_nbody=max_nbody,
     )
     basis = with_fortran_text_labels(basis, atoms.get_chemical_symbols())
-    write_basis_netcdf(basis_path, basis)
+    write_basis_netcdf(
+        basis_path,
+        basis,
+        generator_version=FORTRAN_ANCHORED_GENERATOR_TAG,
+        basis_fingerprint=fingerprint,
+    )
     if legacy_xml.exists():
         legacy_xml.unlink()
     diagnostics = {
         "basis_request_fingerprint": fingerprint,
         "ncell": [1, 1, 1],
         "cutoff": cutoff,
+        "generator_version": FORTRAN_ANCHORED_GENERATOR_TAG,
         "ncoeff": len(basis),
     }
     _write_json(diagnostics, diagnostics_path)
@@ -2129,10 +2203,16 @@ def _basis_request_fingerprint(
     cutoff: float,
     basis_ncell: tuple[int, int, int],
     options: Mapping[str, Any],
+    pure_strain_options: tuple[bool, int] | None = None,
 ) -> str:
     atoms = context.parent_atoms
+    include_pure_strain, max_strain_power = (
+        _pure_strain_options(options)
+        if pure_strain_options is None
+        else pure_strain_options
+    )
     payload = {
-        "generator": "fortran_anchored_v1",
+        "generator": FORTRAN_ANCHORED_GENERATOR_TAG,
         "numbers": [int(item) for item in atoms.get_atomic_numbers()],
         "cell": _rounded_nested(atoms.cell.array),
         "positions": _rounded_nested(atoms.get_positions()),
@@ -2143,6 +2223,8 @@ def _basis_request_fingerprint(
         "use_symmetry": bool(options.get("use_symmetry", True)),
         "symprec": float(options.get("symprec", 1e-5)),
         "include_strain_coupling": bool(options.get("include_strain_coupling", False)),
+        "include_pure_strain": bool(include_pure_strain),
+        "max_strain_power": int(max_strain_power),
         "max_nbody": options.get("max_nbody"),
     }
     text = json.dumps(payload, sort_keys=True, separators=(",", ":"))
@@ -2227,11 +2309,12 @@ def _python_fit_kwargs(context: WorkflowContext) -> dict[str, Any]:
 
 
 def _basis_ncell(context: WorkflowContext) -> tuple[int, int, int]:
-    """Cell used to enumerate coefficient candidates, independent of HIST size."""
-    options = context.config.training.options
-    configured = options.get("basis_ncell")
-    if configured is not None:
-        return tuple(int(item) for item in configured)
+    """Return the primitive-cell basis size.
+
+    ``training.options.basis_ncell`` is a legacy, dead option: anchored basis
+    generation always enumerates the primitive cell, so it is intentionally
+    ignored to keep generation, diagnostics, and cache fingerprints consistent.
+    """
     return (1, 1, 1)
 
 
@@ -2724,7 +2807,7 @@ def _ddb_band_frequencies_cm1(
     return np.asarray(compute_phonon_bands(unitcell, qpoints), dtype=float)
 
 
-def _bool_option(options: dict[str, Any], key: str, default: bool) -> bool:
+def _bool_option(options: Mapping[str, Any], key: str, default: bool) -> bool:
     value = options.get(key, default)
     if isinstance(value, str):
         return value.strip().lower() not in {"0", "false", "no", "off"}

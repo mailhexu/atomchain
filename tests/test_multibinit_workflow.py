@@ -322,6 +322,44 @@ def test_force_stage_reruns_downstream_checkpoints(tmp_path):
     assert calls.count("evaluate") == 2
 
 
+def test_cached_prepare_restores_parent_and_reference_stress(tmp_path):
+    parent = bulk("Al", a=4.0, cubic=True)
+    relaxed = parent.copy()
+    relaxed.set_cell(parent.cell.array * 1.01, scale_atoms=True)
+    stress = [0.001, 0.001, 0.001, 0.0, 0.0, 0.0]
+    context = mw.WorkflowContext(
+        mw.WorkflowConfig(structure=parent, output_dir=tmp_path), parent
+    )
+    write(tmp_path / "parent.vasp", relaxed, format="vasp")
+    (tmp_path / "prepare").mkdir()
+    mw._write_yaml(
+        {
+            "name": "prepare",
+            "status": "completed",
+            "outputs": {
+                "parent_structure": "parent.vasp",
+                "reference_stress_ha_bohr3": stress,
+            },
+        },
+        tmp_path / "prepare" / "stage.yaml",
+    )
+
+    mw._restore_prepare_state(context)
+
+    assert context.parent_atoms.cell.lengths() == pytest.approx(
+        relaxed.cell.lengths(), rel=1e-5
+    )
+    assert context.reference_stress_ha_bohr3 == pytest.approx(stress)
+
+    context.reference_stress_ha_bohr3 = None
+    mw._write_yaml(
+        {"name": "prepare", "status": "failed", "outputs": {}},
+        tmp_path / "prepare" / "stage.yaml",
+    )
+    mw._restore_prepare_state(context)
+    assert context.reference_stress_ha_bohr3 is None
+
+
 def test_workflow_records_partial_failure(tmp_path):
     def fail_train(context, metadata):
         raise RuntimeError("training failed")
@@ -777,7 +815,9 @@ def test_training_stage_dispatches_python_and_binary_backends(tmp_path, monkeypa
     basis_xml = tmp_path / "model" / "basis.xml"
     basis_xml.parent.mkdir(parents=True, exist_ok=True)
     basis_xml.write_text("<model />", encoding="utf-8")
-    monkeypatch.setattr(mw, "_basis_xml", lambda context, model_dir: basis_xml)
+    monkeypatch.setattr(
+        mw, "_basis_xml", lambda context, model_dir, **kwargs: basis_xml
+    )
 
     context.config.training.backend = "python"
     py_outputs = mw.run_training_stage(
@@ -800,6 +840,81 @@ def test_training_stage_dispatches_python_and_binary_backends(tmp_path, monkeypa
     assert bin_calls and bin_outputs["backend"] == "binary"
     assert "ncoeff" not in bin_calls[0]
     assert "regularization" not in bin_calls[0]
+
+
+def test_python_fit_config_resolves_pure_strain_options_for_real_config():
+    from pymultibinit.training import PythonFitConfig
+
+    greedy = mw.WorkflowContext(mw.WorkflowConfig(structure=bulk("Al")), bulk("Al"))
+    config = mw._python_fit_config(greedy)
+
+    assert isinstance(config, PythonFitConfig)
+    assert config.selection == "greedy"
+    assert config.min_pure_strain_ratio == pytest.approx(0.05)
+    assert config.include_pure_strain is True
+    assert config.max_strain_power == 4
+
+    greedy.config.training.options["min_pure_strain_ratio"] = 0.2
+    config = mw._python_fit_config(greedy)
+    assert config.min_pure_strain_ratio == pytest.approx(0.2)
+
+    all_fit = mw.WorkflowContext(
+        mw.WorkflowConfig(
+            structure=bulk("Al"),
+            training=mw.TrainingStageConfig(ncoeff=None),
+        ),
+        bulk("Al"),
+    )
+    all_fit.config.training.options["include_pure_strain"] = False
+    config = mw._python_fit_config(all_fit)
+
+    assert config.selection == "all"
+    assert config.min_pure_strain_ratio == 0.0
+    assert config.include_pure_strain is False
+
+    all_fit.config.training.options["selection"] = "lasso"
+    config = mw._python_fit_config(all_fit)
+    assert config.selection == "lasso"
+    assert config.min_pure_strain_ratio == 0.0
+    assert config.include_pure_strain is False
+
+    all_fit.config.training.options["selection"] = "screened_greedy"
+    del all_fit.config.training.options["include_pure_strain"]
+    config = mw._python_fit_config(all_fit)
+    assert config.selection == "screened_greedy"
+    assert config.min_pure_strain_ratio == pytest.approx(0.05)
+    assert config.include_pure_strain is True
+
+
+def test_basis_fingerprint_tracks_generator_version(monkeypatch):
+    parent = bulk("Al")
+    context = mw.WorkflowContext(mw.WorkflowConfig(structure=parent), parent)
+    cutoff = mw._basis_cutoff(context)
+    original = mw._basis_request_fingerprint(
+        context, cutoff, mw._basis_ncell(context), context.config.training.options
+    )
+
+    monkeypatch.setattr(mw, "FORTRAN_ANCHORED_GENERATOR_TAG", "fortran_anchored_v3")
+
+    assert (
+        mw._basis_request_fingerprint(
+            context, cutoff, mw._basis_ncell(context), context.config.training.options
+        )
+        != original
+    )
+
+
+def test_basis_ncell_is_always_primitive():
+    parent = bulk("Al")
+    context = mw.WorkflowContext(
+        mw.WorkflowConfig(
+            structure=parent,
+            training=mw.TrainingStageConfig(options={"basis_ncell": [2, 3, 4]}),
+        ),
+        parent,
+    )
+
+    assert mw._basis_ncell(context) == (1, 1, 1)
 
 
 def test_basis_xml_reuses_only_matching_fingerprint(tmp_path, monkeypatch):
@@ -838,24 +953,71 @@ def test_basis_xml_reuses_only_matching_fingerprint(tmp_path, monkeypatch):
         ),
         encoding="utf-8",
     )
-    calls = []
+    generated = []
+    writes = []
     training_mod = types.ModuleType("pymultibinit.training")
     training_mod.generate_fortran_anchored_basis = (
-        lambda *args, **kwargs: calls.append("generate") or []
+        lambda *args, **kwargs: generated.append(kwargs) or []
     )
     training_mod.with_fortran_text_labels = lambda basis, symbols: basis
-    training_mod.write_basis_netcdf = lambda path, basis: calls.append(
-        "write"
+    training_mod.write_basis_netcdf = lambda path, basis, **kwargs: writes.append(
+        (path, kwargs)
     ) or path.write_text("new", encoding="utf-8")
     training_mod.load_basis = lambda *args, **kwargs: []
     monkeypatch.setitem(sys.modules, "pymultibinit.training", training_mod)
 
     assert mw._basis_xml(context, model_dir) == basis
-    assert calls == []
+    assert generated == []
+    assert writes == []
 
     context.config.training.options["power_range"] = [2, 2]
     assert mw._basis_xml(context, model_dir) == basis
-    assert calls == ["generate", "write"]
+    assert generated[0]["include_pure_strain"] is True
+    assert generated[0]["max_strain_power"] == 4
+
+    # The quota only steers greedy selection; the generated basis is unchanged.
+    context.config.training.options["min_pure_strain_ratio"] = 0.2
+    assert mw._basis_xml(context, model_dir) == basis
+    assert len(generated) == 1
+    assert writes[0][1] == {
+        "generator_version": mw.FORTRAN_ANCHORED_GENERATOR_TAG,
+        "basis_fingerprint": mw._basis_request_fingerprint(
+            context,
+            mw._basis_cutoff(context),
+            (1, 1, 1),
+            context.config.training.options,
+        ),
+    }
+
+    context.config.training.options["include_pure_strain"] = False
+    assert mw._basis_xml(context, model_dir) == basis
+    assert len(generated) == 2
+    assert generated[1]["include_pure_strain"] is False
+
+    context.config.training.options["max_strain_power"] = 3
+    assert mw._basis_xml(context, model_dir) == basis
+    assert len(generated) == 3
+    assert len(writes) == 3
+    assert generated[2]["max_strain_power"] == 3
+
+
+def test_explicit_basis_xml_skips_anchored_basis_generation(tmp_path, monkeypatch):
+    explicit_basis = tmp_path / "user-basis.nc"
+    explicit_basis.write_text("user basis", encoding="utf-8")
+    context = mw.WorkflowContext(
+        mw.WorkflowConfig(
+            structure=bulk("Al"),
+            output_dir=tmp_path,
+            training=mw.TrainingStageConfig(basis_xml="user-basis.nc"),
+        ),
+        bulk("Al"),
+    )
+    training_mod = types.ModuleType("pymultibinit.training")
+    training_mod.generate_fortran_anchored_basis = pytest.fail
+    monkeypatch.setitem(sys.modules, "pymultibinit.training", training_mod)
+
+    assert mw._basis_xml(context, context.stage_dir("model")) == explicit_basis
+    assert explicit_basis.read_text(encoding="utf-8") == "user basis"
 
 
 def test_basis_xml_regenerates_on_fingerprint_mismatch(tmp_path, monkeypatch):
@@ -887,7 +1049,7 @@ def test_basis_xml_regenerates_on_fingerprint_mismatch(tmp_path, monkeypatch):
         lambda *args, **kwargs: calls.append("generate") or []
     )
     training_mod.with_fortran_text_labels = lambda basis, symbols: basis
-    training_mod.write_basis_netcdf = lambda path, basis: calls.append(
+    training_mod.write_basis_netcdf = lambda path, basis, **kwargs: calls.append(
         "write"
     ) or path.write_text("new", encoding="utf-8")
     training_mod.load_basis = lambda *args, **kwargs: []

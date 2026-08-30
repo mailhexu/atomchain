@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import os
 import sys
 import time
@@ -565,7 +566,7 @@ def run_training_stage(
         output_xml = model_dir / context.config.training.output_xml
         fit_config = _python_fit_config(context)
         basis_xml = _basis_xml(context, model_dir, fit_config=fit_config)
-        kwargs = _python_fit_kwargs(context)
+        kwargs = _python_fit_kwargs(context, train_hist=train_hist)
         kwargs.setdefault("fixed_model", _python_fixed_model(context, ddb))
         raw = fit_multibinit_model_python(
             ddb=str(ddb),
@@ -2299,13 +2300,51 @@ def _basis_symmetry(context: WorkflowContext):
     return symrel, tnons, atom_mappings
 
 
-def _python_fit_kwargs(context: WorkflowContext) -> dict[str, Any]:
+def _python_fit_kwargs(
+    context: WorkflowContext, train_hist: Path | None = None
+) -> dict[str, Any]:
     supported = {"fixed_model", "weights", "validation_hist"}
-    return {
+    kwargs = {
         key: value
         for key, value in context.config.training.options.items()
         if key in supported
     }
+    spec = kwargs.get("weights")
+    if isinstance(spec, Mapping):
+        if train_hist is None:
+            raise ValueError("training.options.weights spec requires the train HIST")
+        kwargs["weights"] = _frame_weights_from_spec(spec, train_hist)
+    return kwargs
+
+
+def _frame_weights_from_spec(spec: Mapping[str, Any], train_hist: Path) -> list[float]:
+    """Per-frame fit weights from a declarative spec.
+
+    mode "force_rms_boltzmann": w = exp(-F_rms^2 / (2 sigma^2)) with F_rms the
+    RMS reference force of the frame in eV/Ang. Emphasizes low-force (basin and
+    saddle) configurations while keeping high-force frames at reduced weight for
+    harmonic identifiability.
+    """
+    from pymultibinit.training import read_hist_frames
+
+    mode = spec.get("mode", "force_rms_boltzmann")
+    if mode != "force_rms_boltzmann":
+        raise ValueError(f"unsupported weights mode: {mode!r}")
+    sigma_ev_ang = float(spec["sigma_ev_ang"])
+    if sigma_ev_ang <= 0.0:
+        raise ValueError("weights sigma_ev_ang must be positive")
+    floor = float(spec.get("floor", 0.0))
+    if not 0.0 <= floor <= 1.0:
+        raise ValueError("weights floor must lie in [0, 1]")
+    ha_bohr_to_ev_ang = 51.422067
+    frames = read_hist_frames(str(train_hist))
+    weights = []
+    for frame in frames:
+        forces = np.asarray(frame.forces, dtype=float)
+        f_rms_ev_ang = float(np.sqrt(np.mean(forces**2))) * ha_bohr_to_ev_ang
+        weight = math.exp(-0.5 * (f_rms_ev_ang / sigma_ev_ang) ** 2)
+        weights.append(max(weight, floor))
+    return weights
 
 
 def _basis_ncell(context: WorkflowContext) -> tuple[int, int, int]:

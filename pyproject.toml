@@ -1,6 +1,6 @@
 [project]
 name = "atomchain"
-version = "0.3.2"
+version = "0.3.3"
 description = "A library to chain the atomic models with applications"
 authors = [
     {name = "Xu He", email = "mailhexu@gmail.com"},
@@ -107,9 +107,9 @@ mace=[
 materials-project=[
     "mp-api",
 ]
-bondvalence=[
-    "easybondvalence",
-]
+#bondvalence=[
+#    "easybondvalence",
+#]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
